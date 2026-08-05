@@ -6,6 +6,8 @@ Run Claude only in the trusted repository/worktree selected by native Superpower
 
 Read [claude-result.schema.json](claude-result.schema.json) and pass its JSON text to `--json-schema`.
 
+Persist each Task's Session ID, capability alias, attempt number, and latest structured result at `.superpowers/sdd/<plan>/task-N-claude-state.json`. Keep the native task brief/report/progress artifacts authoritative; this adapter file is not a second ledger.
+
 ## New Session
 
 Generate a valid UUID before launch. Invoke the local `claude` executable with these semantic arguments:
@@ -54,7 +56,7 @@ Validate the structured payload against the bundled schema and verify its `sessi
 |---|---|
 | `DONE` | Verify native report and evidence, then enter native Review |
 | `DONE_WITH_CONCERNS` | Present concerns; Codex/user decides whether Review can start |
-| `NEEDS_CONTEXT` | Supply only missing task context and resume the same Session |
+| `NEEDS_CONTEXT` | Supply only listed `context_requests` and resume the same Session |
 | `BLOCKED` | Stop the Task and report the blocker |
 | `PERMISSION_REQUIRED` | Obtain user approval or stop |
 

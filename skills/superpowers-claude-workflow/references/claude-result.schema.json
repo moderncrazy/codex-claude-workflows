@@ -10,6 +10,7 @@
     "commits",
     "tests",
     "concerns",
+    "context_requests",
     "permission_requests"
   ],
   "properties": {
@@ -23,14 +24,8 @@
         "PERMISSION_REQUIRED"
       ]
     },
-    "summary": {
-      "type": "string",
-      "minLength": 1
-    },
-    "session_id": {
-      "type": "string",
-      "format": "uuid"
-    },
+    "summary": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "format": "uuid" },
     "commits": {
       "type": "array",
       "items": { "type": "string" }
@@ -50,7 +45,11 @@
     },
     "concerns": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "context_requests": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
     },
     "permission_requests": {
       "type": "array",
@@ -65,5 +64,39 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "PERMISSION_REQUIRED" } }, "required": ["status"] },
+      "then": { "properties": { "permission_requests": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "DONE_WITH_CONCERNS" } }, "required": ["status"] },
+      "then": { "properties": { "concerns": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "NEEDS_CONTEXT" } }, "required": ["status"] },
+      "then": { "properties": { "context_requests": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "DONE" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "concerns": { "maxItems": 0 },
+          "context_requests": { "maxItems": 0 },
+          "permission_requests": { "maxItems": 0 },
+          "tests": {
+            "minItems": 1,
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": ["status"],
+                "properties": { "status": { "enum": ["failed", "not_run"] } }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

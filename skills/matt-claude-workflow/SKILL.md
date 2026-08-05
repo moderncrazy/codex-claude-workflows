@@ -11,7 +11,7 @@ Keep Matt's Skills as workflow owner. Adapt only implementation while preserving
 
 ## Required references
 
-Before routing work, read [executor-contract.md](references/executor-contract.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md) and its [result Schema](references/claude-result.schema.json).
+Before routing work, read [executor-contract.md](references/executor-contract.md) and [matt-lifecycle-adapter.md](references/matt-lifecycle-adapter.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md) and its [result Schema](references/claude-result.schema.json).
 
 ## Workflow
 
@@ -19,8 +19,8 @@ Before routing work, read [executor-contract.md](references/executor-contract.md
 2. **Clarify.** **REQUIRED SUB-SKILL:** Use `grill-with-docs` when durable glossary/ADR documentation is useful; otherwise use `grill-me`. Let Codex own requirements, domain decisions, unresolved questions, and approval.
 3. **Choose scale.** Use the implicit-task path for one cohesive session. Use the Spec/Ticket path for cross-session work or multiple tracer bullets.
 4. **Confirm seams.** **REQUIRED SUB-SKILL:** Use `tdd` to select the highest useful public test seams. Obtain the confirmation required by the native flow.
-5. **Implement.** **REQUIRED SUB-SKILL:** Use `implement` as workflow owner. Apply the implementer adapter below.
-6. **Review and commit.** **REQUIRED SUB-SKILL:** Use `code-review` with the captured fixed point and its Standards/Spec Codex reviewers. Preserve report-only semantics. Follow `implement` for verification, commit, and tracker updates.
+5. **Implement.** **REQUIRED SUB-SKILL:** Use `implement` as workflow owner. Apply the implementer and lifecycle adapters.
+6. **Review and complete.** Follow the lifecycle adapter for the local review checkpoint, **REQUIRED SUB-SKILL:** `code-review`, user-directed fixes, and native Tracker completion.
 
 ## Implicit-task path
 
@@ -31,7 +31,7 @@ Present one in-conversation executor contract with scope, acceptance criteria, f
 1. **REQUIRED SUB-SKILL:** Use `to-spec`. Add the overall routing policy without assigning each Ticket there.
 2. **REQUIRED SUB-SKILL:** Use `to-tickets`. Add one executor contract per Ticket and preserve native blocking edges.
 3. Show Ticket, agent, capability model, and reason. Persist overrides, revalidate, and obtain user approval before implementation.
-4. Process only unblocked Tickets. Reuse native Spec, Ticket, tracker, and commit state; do not create another ledger.
+4. Process only unblocked Tickets. Claim and resolve them through the configured Tracker as defined by the lifecycle adapter. Do not create another ledger.
 
 ## Implementer adapter
 
@@ -40,15 +40,10 @@ Present one in-conversation executor contract with scope, acceptance criteria, f
 - Create a fresh Claude Session for each Ticket. Keep its ID in the Ticket's existing progress/comment channel. Never reuse a Session across Tickets.
 - Keep all source, test, documentation, and configuration changes for a work unit with its selected implementer.
 
-## Review and fixes
-
-- Report both native Review axes without automatically starting a fix loop.
-- Ask the user how to handle findings. Resume the same work-unit Session only when the user requests fixes, then re-run verification and native Review.
-- Do not add a cross-Ticket Final Review or Verify Review.
-
 ## Common mistakes
 
 - Replacing `to-spec`/`to-tickets` with generic PRD/issue Skills.
 - Creating a pseudo-Ticket for an implicit task.
 - Reusing Claude Sessions across Tickets.
+- Running commit-based Review before a local checkpoint commit exists.
 - Auto-fixing Review findings or silently falling back to Codex.

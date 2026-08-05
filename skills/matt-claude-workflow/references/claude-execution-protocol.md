@@ -30,7 +30,7 @@ The prompt contains only:
 4. exact allowed and forbidden scope;
 5. focused/typecheck/full-suite verification requirements;
 6. repository/worktree and fixed-point baseline;
-7. instruction not to change requirements, seams, Tickets, tracker state, workflow, remote state, or Git history;
+7. instruction not to change requirements, seams, Tickets, Tracker state, workflow, or remote state; permit local `git add` and `git commit` only for an orchestrator-requested review checkpoint or fix commit, and prohibit push, merge, amend, rebase, reset, and tag;
 8. instruction to return the required structured result.
 
 Do not use provider-specific model IDs or `--fallback-model`.
@@ -55,9 +55,9 @@ Validate the structured payload against the bundled schema and verify its `sessi
 
 | Status | Action |
 |---|---|
-| `DONE` | Verify tests/evidence, then run native Matt `code-review` |
+| `DONE` | Verify tests/evidence and a local checkpoint commit, then run native Matt `code-review` |
 | `DONE_WITH_CONCERNS` | Present concerns; Codex/user decides whether Review can start |
-| `NEEDS_CONTEXT` | Supply only missing work-unit context and resume the same Session |
+| `NEEDS_CONTEXT` | Supply only listed `context_requests` and resume the same Session |
 | `BLOCKED` | Preserve native blocker state and report |
 | `PERMISSION_REQUIRED` | Obtain user approval or stop |
 

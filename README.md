@@ -92,6 +92,8 @@ Use $matt-claude-workflow to turn this requirement into reviewed implementation.
 
 Single-session work uses an in-conversation implicit task without creating a Ticket. Multi-session work uses native `to-spec` and `to-tickets`; each Ticket receives an independent Claude Code Session and preserves native blocking relationships.
 
+Before native commit-based `code-review`, the selected implementer creates a local review checkpoint commit. It never pushes or rewrites history. After accepted Review and verification, Codex resolves the Ticket through the configured Tracker and recomputes the native frontier.
+
 ## Executor contract
 
 Claude implementation:
@@ -164,6 +166,7 @@ python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/s
 python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/matt-claude-workflow
 python3 -m json.tool skills/superpowers-claude-workflow/references/claude-result.schema.json
 python3 -m json.tool skills/matt-claude-workflow/references/claude-result.schema.json
+python3 -m unittest tests/test_workflow_contracts.py -v
 ```
 
 The two Skills are packaged separately on purpose. Framework-specific state, Review, repair, and completion semantics must not be combined into a shared runtime orchestrator.
