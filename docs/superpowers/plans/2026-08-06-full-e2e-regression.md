@@ -48,7 +48,7 @@ Required behavior:
 - `delete` returns `True` only when the key existed, including an expired-but-not-yet-read key; it removes that entry.
 - `clear` removes every entry.
 - Tests use a mutable fake monotonic clock and contain no sleeping or wall-clock dependence.
-- Focused and full verification command: `python -m unittest discover -s tests -v`.
+- Focused and full verification command: `python3 -m unittest discover -s tests -v`.
 
 Expected project files in each regression repository:
 
@@ -109,6 +109,16 @@ executor:
 
 Validate independence, current-session execution, file ownership, and native SDD compatibility. Record route approval.
 
+Approved initial Permission Budget for the Claude-owned Task:
+
+```text
+Bash(python3 -m unittest discover -s tests -v)
+Bash(git status --short)
+Bash(git diff --check)
+Bash(git add ttl_cache/__init__.py ttl_cache/cache.py tests/test_cache.py)
+Bash(git commit -m "feat: implement TTL cache")
+```
+
 - [ ] **Step 4: Execute Task 1 with real Claude Code**
 
 Invoke native `subagent-driven-development` as owner. Generate a UUID, call Claude Code with the bundled Schema and the complete native brief, and require Red then Green evidence plus the native report. Validate structured output and matching Session ID; persist deterministic Claude state without creating another ledger.
@@ -127,7 +137,7 @@ Create `README.md` with the public API, TTL boundary semantics, and exact verifi
 
 - [ ] **Step 8: Complete native whole-branch checks**
 
-Run whole-branch Final Review, `python -m unittest discover -s tests -v`, and native `finishing-a-development-branch`. Select the local keep/finish option that does not push or merge. Record final HEAD, status, reports, Session ID, and Review dispositions.
+Run whole-branch Final Review, `python3 -m unittest discover -s tests -v`, and native `finishing-a-development-branch`. Select the local keep/finish option that does not push or merge. Record final HEAD, status, reports, Session ID, and Review dispositions.
 
 ## Task 2: Matt Real Regression
 
@@ -168,6 +178,18 @@ executor:
   reason: one cohesive standard-library implementation with approved public seams
 ```
 
+Approved initial Permission Budget:
+
+```text
+Read(/Users/geekeryoung.gao/Documents/Codex/2026-08-05/new-chat/work/codex-claude-workflows/docs/superpowers/specs/2026-08-06-full-e2e-regression-design.md)
+Read(/Users/geekeryoung.gao/Documents/Codex/2026-08-05/new-chat/work/codex-claude-workflows/docs/superpowers/plans/2026-08-06-full-e2e-regression.md)
+Bash(python3 -m unittest discover -s tests -v)
+Bash(git status --short)
+Bash(git diff --check)
+Bash(git add ttl_cache/__init__.py ttl_cache/cache.py tests/test_cache.py README.md)
+Bash(git commit -m "feat: implement TTL cache")
+```
+
 - [ ] **Step 4: Execute native Implement with real Claude Code**
 
 Invoke native `implement` as owner. Generate a fresh UUID distinct from Task 1, call Claude Code with the bundled Schema, validate structured output and Session ID, require Red then Green evidence, and have Claude create one local review checkpoint commit. Do not create a Ticket or second ledger.
@@ -182,7 +204,7 @@ Use `--resume <implicit-task-session-id>` with the same Schema. Supply only the 
 
 - [ ] **Step 7: Re-review and complete the implicit task**
 
-Rerun native `code-review` against the original baseline, run `python -m unittest discover -s tests -v`, and record both Review axes, both commit SHAs, test evidence, Session ID, and clean status. Do not run a cross-Ticket Final Review or create Tracker state.
+Rerun native `code-review` against the original baseline, run `python3 -m unittest discover -s tests -v`, and record both Review axes, both commit SHAs, test evidence, Session ID, and clean status. Do not run a cross-Ticket Final Review or create Tracker state.
 
 ## Task 3: Compare Evidence and Report
 
@@ -207,7 +229,7 @@ Report PASS only if both workflows complete. Classify verified defects by severi
 Run:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 git diff --check
 git status --short
 ```
