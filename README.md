@@ -59,7 +59,7 @@ Codex and Claude Code recognize personal Skills under `~/.agents/skills/`.
 For development, clone this repository and create links:
 
 ```bash
-git clone https://gitlab.s.hi-hub.xyz:8443/skill/codex-claude-workflows.git
+git clone <repository-url>
 cd codex-claude-workflows
 mkdir -p ~/.agents/skills
 ln -s "$PWD/skills/superpowers-claude-workflow" ~/.agents/skills/superpowers-claude-workflow
