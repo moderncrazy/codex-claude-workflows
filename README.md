@@ -56,17 +56,17 @@ The repository selects only the capability aliases `sonnet` and `opus`. Configur
 
 Codex and Claude Code recognize personal Skills under `~/.agents/skills/`.
 
-For development, clone this repository and create links:
+Clone this repository and copy the Skills into the personal Skills directory:
 
 ```bash
 git clone <repository-url>
 cd codex-claude-workflows
 mkdir -p ~/.agents/skills
-ln -s "$PWD/skills/superpowers-claude-workflow" ~/.agents/skills/superpowers-claude-workflow
-ln -s "$PWD/skills/matt-claude-workflow" ~/.agents/skills/matt-claude-workflow
+cp -R skills/superpowers-claude-workflow ~/.agents/skills/superpowers-claude-workflow
+cp -R skills/matt-claude-workflow ~/.agents/skills/matt-claude-workflow
 ```
 
-Remove or rename an existing destination before creating a link. The Skills intentionally set `allow_implicit_invocation: false`.
+Remove or rename an existing destination before copying, so an old installation cannot leave stale files behind. The Skills intentionally set `allow_implicit_invocation: false`.
 
 ## Usage
 
