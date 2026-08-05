@@ -19,6 +19,31 @@ def condition_for(schema: dict, status: str) -> dict:
 
 
 class SharedResultSchemaTests(unittest.TestCase):
+    def test_schema_uses_claude_supported_draft_and_strict_array_types(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            schema = load_schema(skill)
+            self.assertEqual(
+                schema["$schema"],
+                "http://json-schema.org/draft-07/schema#",
+            )
+
+            permission = condition_for(schema, "PERMISSION_REQUIRED")["properties"]
+            concerns = condition_for(schema, "DONE_WITH_CONCERNS")["properties"]
+            context = condition_for(schema, "NEEDS_CONTEXT")["properties"]
+            done = condition_for(schema, "DONE")["properties"]
+
+            self.assertEqual(permission["permission_requests"]["type"], "array")
+            self.assertEqual(concerns["concerns"]["type"], "array")
+            self.assertEqual(context["context_requests"]["type"], "array")
+            for field in (
+                "concerns",
+                "context_requests",
+                "permission_requests",
+                "tests",
+            ):
+                self.assertEqual(done[field]["type"], "array")
+            self.assertEqual(done["tests"]["not"]["type"], "array")
+
     def test_statuses_require_their_recovery_payloads(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
             schema = load_schema(skill)
