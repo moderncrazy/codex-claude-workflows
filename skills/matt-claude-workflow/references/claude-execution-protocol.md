@@ -17,6 +17,7 @@ claude -p
   --session-id <uuid>
   --model <sonnet|opus>
   --permission-mode acceptEdits
+  [--allowedTools <exact-approved-rule> ...]
   --output-format json
   --json-schema <schema-json>
   <work-unit-prompt>
@@ -32,12 +33,21 @@ The prompt contains only:
 6. repository/worktree and fixed-point baseline;
 7. instruction not to change requirements, seams, Tickets, Tracker state, workflow, or remote state; permit local `git add` and `git commit` only for an orchestrator-requested review checkpoint or fix commit, and prohibit push, merge, amend, rebase, reset, and tag;
 8. instruction to return the required structured result.
+9. instruction that a tool result of `This command requires approval` must return `PERMISSION_REQUIRED` immediately without retrying variants, delegating to another Agent, or continuing implementation.
 
 Do not use provider-specific model IDs or `--fallback-model`.
 
+## Initial command permissions
+
+Before a new Session, derive the smallest `--allowedTools` list from exact commands already approved in the Ticket or implicit-task contract. A general approval to implement is not an exact command approval. Show the rules before launch when they were not already shown verbatim in the approved work unit.
+
+Pre-approve only exact, work-unit-scoped commands required by the confirmed seams and acceptance criteria, such as the named Red/Green test, full-suite, formatter, or typecheck command. When the lifecycle adapter explicitly requires the selected implementer to create a local review checkpoint, exact `git add <owned-files>` and `git commit -m <approved-message>` commands may also be approved. Never pre-approve package installation, network commands, push, merge, deployment, amend, rebase, reset, tag, a shell/interpreter wildcard, bare `Bash`, or `Agent` as a way around permissions.
+
+Pass every approved command as a narrow `--allowedTools` rule. If Claude receives `This command requires approval` for anything else, it must return `PERMISSION_REQUIRED` immediately with that exact command, scope, and reason. It must not retry command variants, spawn another Agent to run it, infer approval, or continue past required evidence.
+
 ## Resume
 
-Use non-interactive `--resume <session-id>` for missing context, approved permissions, or user-requested fixes to the same work unit. Verify the returned Session ID. Never use `--continue`, and never resume one Ticket's Session for another Ticket.
+Use non-interactive `--resume <session-id>` for missing context, approved permissions, or user-requested fixes to the same work unit. Re-pass the already approved narrow `--allowedTools` rules and add only newly approved exact requests. Verify the returned Session ID. Never use `--continue`, and never resume one Ticket's Session for another Ticket.
 
 If the original Session cannot resume, report infrastructure failure. Do not create a replacement Claude Session for that work unit.
 

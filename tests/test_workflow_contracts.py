@@ -89,6 +89,23 @@ class MattLifecycleTests(unittest.TestCase):
         self.assertIn("do not add a cross-ticket final review or verify review", text)
 
 
+class ClaudeExecutionProtocolTests(unittest.TestCase):
+    def test_noninteractive_runs_preapprove_only_exact_user_approved_commands(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            protocol = (
+                ROOT
+                / "skills"
+                / skill
+                / "references"
+                / "claude-execution-protocol.md"
+            ).read_text()
+            self.assertIn("## Initial command permissions", protocol)
+            self.assertIn("exact commands already approved", protocol)
+            self.assertIn("`--allowedTools`", protocol)
+            self.assertIn("`This command requires approval`", protocol)
+            self.assertIn("return `PERMISSION_REQUIRED` immediately", protocol)
+
+
 class SuperpowersStateTests(unittest.TestCase):
     def test_claude_state_uses_a_deterministic_native_workspace_filename(self):
         protocol = (
