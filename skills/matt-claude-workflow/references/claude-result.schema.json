@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Claude Code Structured Work Unit Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "summary",
+    "session_id",
+    "commits",
+    "tests",
+    "concerns",
+    "permission_requests"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "DONE",
+        "DONE_WITH_CONCERNS",
+        "NEEDS_CONTEXT",
+        "BLOCKED",
+        "PERMISSION_REQUIRED"
+      ]
+    },
+    "summary": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "format": "uuid" },
+    "commits": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "status", "summary"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["passed", "failed", "not_run"] },
+          "summary": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "concerns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "permission_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "scope", "reason"],
+        "properties": {
+          "tool": { "type": "string", "minLength": 1 },
+          "scope": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

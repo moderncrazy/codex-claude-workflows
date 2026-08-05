@@ -1,0 +1,6 @@
+interface:
+  display_name: "Matt Claude Workflow"
+  short_description: "Run Matt workflows with routed Claude implementation"
+  default_prompt: "Use $matt-claude-workflow to turn this requirement into reviewed implementation."
+policy:
+  allow_implicit_invocation: false

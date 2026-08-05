@@ -1,0 +1,6 @@
+interface:
+  display_name: "Superpowers Claude Workflow"
+  short_description: "Run Superpowers with routed Claude implementation"
+  default_prompt: "Use $superpowers-claude-workflow to take this feature from requirements through reviewed implementation."
+policy:
+  allow_implicit_invocation: false
