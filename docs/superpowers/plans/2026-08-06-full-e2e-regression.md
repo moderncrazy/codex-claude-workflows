@@ -117,6 +117,7 @@ Bash(git status --short)
 Bash(git diff --check)
 Bash(git add ttl_cache/__init__.py ttl_cache/cache.py tests/test_cache.py)
 Bash(git commit -m "feat: implement TTL cache")
+Bash(git commit -m "fix: address review feedback")
 ```
 
 - [ ] **Step 4: Execute Task 1 with real Claude Code**
@@ -188,6 +189,7 @@ Bash(git status --short)
 Bash(git diff --check)
 Bash(git add ttl_cache/__init__.py ttl_cache/cache.py tests/test_cache.py README.md)
 Bash(git commit -m "feat: implement TTL cache")
+Bash(git commit -m "fix: address review feedback")
 ```
 
 - [ ] **Step 4: Execute native Implement with real Claude Code**
