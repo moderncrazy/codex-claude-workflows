@@ -95,7 +95,6 @@ def handle_permission_request(state_dir: Path, source: TextIO | None = None, sin
     except Exception as exc:
         return _fail_closed(output_stream, str(exc))
 
-
 def handle_permission_denied(state_dir: Path, source: TextIO | None = None, sink: TextIO | None = None) -> int:
     input_stream = source or sys.stdin
     output_stream = sink or sys.stdout
@@ -113,4 +112,3 @@ def handle_permission_denied(state_dir: Path, source: TextIO | None = None, sink
         return 0
     except Exception as exc:
         return _fail_closed(output_stream, str(exc))
-

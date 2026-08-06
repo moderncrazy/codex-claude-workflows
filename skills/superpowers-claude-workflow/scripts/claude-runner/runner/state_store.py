@@ -126,4 +126,3 @@ class StateStore:
         self.update(mutate)
         assert saved is not None
         return saved
-

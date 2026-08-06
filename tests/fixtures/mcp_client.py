@@ -34,4 +34,3 @@ class McpClient:
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return self.request("tools/call", {"name": name, "arguments": arguments})
-

@@ -134,4 +134,3 @@ def serve_progress_mcp(
             sink.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
             sink.flush()
     return 0
-

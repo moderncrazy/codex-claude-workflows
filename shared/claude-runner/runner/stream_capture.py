@@ -64,4 +64,3 @@ def _content_blocks(value: Any) -> list[dict[str, Any]]:
         for key in ("message",):
             blocks.extend(_content_blocks(value.get(key)))
     return blocks
-
