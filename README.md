@@ -105,11 +105,11 @@ Compact Runner events are shown by default. Codex reads raw evidence only when n
 
 Model-idle, unmatched-tool, and Work Unit thresholds emit `timeout_suspected`; they never kill Claude. Codex decides whether to extend, interrupt, or terminate. Adapter state survives backend failure and can be inspected with `status` before a deliberate resume.
 
-Each new Execution Segment gets a fresh Session. Permission/context continuation resumes the active Segment Session. Cross-Segment Review findings receive a Codex-defined Repair Segment.
+Each new Execution Segment gets a fresh Session. Permission/context continuation resumes the active Segment Session. For `NEEDS_CONTEXT`, Codex supplies the bounded answer with `resume --continuation-context`; the Runner records that exact continuation input in Work Unit state. Cross-Segment Review findings receive a Codex-defined Repair Segment.
 
 ## Permissions and failures
 
-The Runner injects per-invocation Claude permission Hooks. A request is recorded verbatim and Claude stops immediately; the mechanism does not depend on prompt obedience.
+The Runner injects per-invocation Claude permission Hooks. A Hook request is recorded verbatim and Claude stops immediately; a structured `PERMISSION_REQUIRED` result is normalized into the same pending broker contract. The mechanism does not depend on prompt obedience.
 
 The Codex permission broker automatically approves repository-scoped, task-relevant read-only built-ins, narrow CLI inspections, exact read-only MCP operations, and version/help probes. It adds one narrow rule and resumes without interrupting the user. It asks the user for side effects, external scope/writes, installation, credentials, remote changes, destructive actions, scope expansion, or ambiguous effects.
 

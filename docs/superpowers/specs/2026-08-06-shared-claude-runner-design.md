@@ -57,7 +57,7 @@ The three named files are the only persistent Work Unit files. Lock and atomic-r
 
 ## Adapter State
 
-`work-unit.json` is the only authoritative Adapter State. It records schema version, Work Unit identity and native reference, working root and fixed point, executor and Capability Model, Segment definitions and Session IDs, process identity, timestamps, timeout observations, permission rules and pending requests, Progress Claim references, declared and verified evidence, commits, and implementation result.
+`work-unit.json` is the only authoritative Adapter State. It records schema version, Work Unit identity and native reference, working root and fixed point, executor and Capability Model, Segment definitions and Session IDs, process identity, timestamps, timeout observations, permission rules and pending requests, bounded Codex-supplied continuation inputs, Progress Claim references, declared and verified evidence, commits, and implementation result.
 
 Native Task, Ticket, Review, verification, and completion state remain outside it. Markdown briefs, progress files, permission continuations, repair prompts, and implementation reports are not additional state ledgers. The Runner executable is the only writer: every command takes the Work Unit lock, validates the current transition, writes a complete temporary JSON document, fsyncs it, and atomically replaces the prior file.
 

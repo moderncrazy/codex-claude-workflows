@@ -32,7 +32,7 @@ Model-idle, tool-idle, and Work Unit thresholds produce `timeout_suspected` only
 
 ## Permissions
 
-Injected `PermissionRequest` and `PermissionDenied` Hooks stop Claude outside the prompt and record the exact request. Apply [claude-permission-broker.md](claude-permission-broker.md), call `approve-permission` with one narrow rule, then `resume` the same Session. A Hook/Reporter/state failure is a backend failure, never permission to continue.
+Injected `PermissionRequest` and `PermissionDenied` Hooks stop Claude outside the prompt and record the exact request. A structured `PERMISSION_REQUIRED` result enters the same pending broker contract. Apply [claude-permission-broker.md](claude-permission-broker.md), call `approve-permission` with one narrow rule, then `resume` the same Session. For `NEEDS_CONTEXT`, answer the exact request with bounded `resume --continuation-context`; never edit adapter state directly. A Hook/Reporter/state failure is a backend failure, never permission to continue.
 
 `--allowedTools` reduces prompts; it does not remove existing MCP tools. Managed denials still win.
 

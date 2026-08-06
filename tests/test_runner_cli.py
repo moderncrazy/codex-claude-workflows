@@ -203,6 +203,70 @@ class RunnerCliTests(unittest.TestCase):
             resumed = self.run_cli("resume", "--state-dir", str(state_dir), environment=success_environment)
             self.assertEqual(resumed["status"], "implementation_complete")
 
+    def test_structured_permission_can_be_approved_then_resumed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "5ed09ec3-13fb-4f25-a8c7-b704e15ea677")
+            stopped = self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="structured-permission"),
+                expected=3,
+            )
+            self.assertEqual(stopped["permissions"]["pending"]["tool_name"], "Bash")
+
+            self.run_cli(
+                "approve-permission",
+                "--state-dir",
+                str(state_dir),
+                "--expected-tool-name",
+                "Bash",
+                "--allow-rule",
+                "Bash(pytest --version)",
+            )
+            resumed = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+            self.assertEqual(resumed["status"], "implementation_complete")
+
+    def test_context_continuation_is_bounded_persisted_and_sent_to_same_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "1392e7a3-ad92-49e0-8118-e894c174548d")
+            environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="require-context")
+            stopped = self.run_cli("run", "--state-dir", str(state_dir), environment=environment, expected=3)
+            session_id = stopped["segments"][0]["session_id"]
+
+            missing = self.run_cli("resume", "--state-dir", str(state_dir), environment=environment, expected=2)
+            self.assertEqual(missing["error"], "continuation_context_required")
+            too_large = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                "--continuation-context",
+                "x" * 65537,
+                environment=environment,
+                expected=2,
+            )
+            self.assertEqual(too_large["error"], "continuation_context_too_large")
+
+            resumed = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                "--continuation-context",
+                "fixture answer",
+                environment=environment,
+            )
+            self.assertEqual(resumed["status"], "implementation_complete")
+            self.assertEqual(resumed["segments"][0]["session_id"], session_id)
+            state = json.loads((state_dir / "work-unit.json").read_text())
+            self.assertEqual(state["runtime"]["continuation_inputs"][-1]["context"], "fixture answer")
+
     def test_active_run_lease_rejects_duplicate_launch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)

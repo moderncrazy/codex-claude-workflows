@@ -76,6 +76,8 @@ def parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name)
         command.add_argument("--state-dir", required=True, type=Path)
         command.add_argument("--segment-id")
+        if name == "resume":
+            command.add_argument("--continuation-context")
     for name in ("status", "interrupt", "terminate", "finish"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", required=True, type=Path)
@@ -257,6 +259,14 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
     if resume:
         if not segment["session_id"]:
             raise CliError("missing_session", "resume requires the recorded Segment Session ID")
+        continuation_context = args.continuation_context
+        if state.result and state.result.get("status") == "NEEDS_CONTEXT" and not continuation_context:
+            raise CliError(
+                "continuation_context_required",
+                "resume requires Codex-supplied continuation context for NEEDS_CONTEXT",
+            )
+        if continuation_context and len(continuation_context.encode("utf-8")) > 65536:
+            raise CliError("continuation_context_too_large", "continuation context exceeds 65536 UTF-8 bytes")
         if segment["status"] == "complete":
             def reopen(current: WorkUnitState) -> None:
                 target = next(item for item in current.segments if item["segment_id"] == segment["segment_id"])
@@ -271,6 +281,18 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
 
             state = store.update(reopen)
             segment = next(item for item in state.segments if item["segment_id"] == segment["segment_id"])
+        if continuation_context:
+            def record_context(current: WorkUnitState) -> None:
+                current.runtime.setdefault("continuation_inputs", []).append(
+                    {
+                        "segment_id": segment["segment_id"],
+                        "session_id": segment["session_id"],
+                        "context": continuation_context,
+                        "supplied_at": utc_now(),
+                    }
+                )
+
+            state = store.update(record_context)
     elif segment["session_id"] is None:
         session_id = str(uuid.uuid4())
 
@@ -302,7 +324,10 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
         reporter_config_json=json.dumps(reporter, separators=(",", ":")),
         hook_settings_json=json.dumps(settings, separators=(",", ":")),
         result_schema=Path(configuration["result_schema"]),
-        prompt=f"{configuration['prompt']}\n\nExecution Segment scope: {segment['scope']}",
+        prompt=(
+            f"{configuration['prompt']}\n\nExecution Segment scope: {segment['scope']}"
+            + (f"\n\nCodex continuation context:\n{args.continuation_context}" if resume and args.continuation_context else "")
+        ),
     )
     supervisor = Supervisor(store, invocation, event_sink=_emit, environment=os.environ, **configuration["thresholds"])
     try:

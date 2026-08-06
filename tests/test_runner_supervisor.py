@@ -140,6 +140,24 @@ class SupervisorTests(unittest.TestCase):
                     "blocked": "BLOCKED",
                     "structured-permission": "PERMISSION_REQUIRED",
                 }[scenario])
+                if scenario == "structured-permission":
+                    self.assertEqual(state.permissions["pending"]["tool_name"], "Bash")
+
+    def test_public_interrupt_records_an_interrupted_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, events = self.make_supervisor(
+                Path(directory), "model-idle", heartbeat_seconds=0.02
+            )
+
+            def request_interrupt(event: dict[str, object]) -> None:
+                events.append(event)
+                if event["kind"] == "heartbeat":
+                    supervisor.interrupt()
+
+            supervisor.event_sink = request_interrupt
+
+            self.assertNotEqual(supervisor.run(), 0)
+            self.assertEqual(store.load().status, "interrupted")
 
     def test_explicit_terminate_escalates_after_grace_without_pid_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

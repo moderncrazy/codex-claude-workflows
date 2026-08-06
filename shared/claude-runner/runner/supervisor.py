@@ -523,6 +523,14 @@ class Supervisor:
                 state.transition_to(WorkUnitStatus.RUNNING)
             state.data["result"] = result
             state.transition_to(target)
+            if result_status == "PERMISSION_REQUIRED":
+                request = result["permission_requests"][0]
+                state.permissions["pending"] = {
+                    "request": {"origin": "structured_result", **request},
+                    "tool_name": request["tool"],
+                    "tool_input": {"scope": request["scope"]},
+                    "received_at": utc_now(),
+                }
             state.runtime["pid"] = None
             state.runtime["process_group_id"] = None
             state.runtime["active_run"] = None
@@ -537,7 +545,7 @@ class Supervisor:
         self._emit("continuation_required", result_status=result_status, result=result)
 
     def interrupt(self) -> None:
-        self._signal(signal.SIGINT)
+        self.interrupt_requested = True
 
     def terminate(self) -> None:
         self.terminate_requested = True
