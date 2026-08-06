@@ -1,17 +1,18 @@
 ---
 name: matt-claude-workflow
-description: Use when the user explicitly invokes $matt-claude-workflow for a Matt Pocock workflow that needs per-work-unit implementer routing.
+description: Run a Matt Pocock workflow with per-work-unit Codex and Claude implementer routing.
+disable-model-invocation: true
 ---
 
 # Matt Claude Workflow
 
 ## Overview
 
-Keep Matt's Skills as workflow owner. Adapt only implementation while preserving Spec/Ticket state, test seams, dual Codex Review, commits, and tracker behavior. Leave original Skills unchanged.
+Keep Matt's Skills as workflow owner. Adapt only implementation while preserving Spec/Ticket state, test seams, native two-axis Codex Review, commits, and tracker behavior. Leave original Skills unchanged.
 
 ## Required references
 
-Before routing work, read [executor-contract.md](references/executor-contract.md) and [matt-lifecycle-adapter.md](references/matt-lifecycle-adapter.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md) and its [result Schema](references/claude-result.schema.json).
+Before routing work, read [executor-contract.md](references/executor-contract.md) and [matt-lifecycle-adapter.md](references/matt-lifecycle-adapter.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md). Pass the bundled result Schema verbatim as machine input; keep it out of agent guidance.
 
 ## Workflow
 

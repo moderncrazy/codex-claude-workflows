@@ -4,7 +4,7 @@
 
 Run Claude only in the trusted repository/worktree selected by native Superpowers. Use non-interactive print mode. Do not configure or inspect the provider behind Claude Code; `sonnet` and `opus` are capability aliases selected by the Task.
 
-Read [claude-result.schema.json](claude-result.schema.json) and pass its JSON text to `--json-schema`.
+Pass [claude-result.schema.json](claude-result.schema.json) verbatim to `--json-schema` as machine input.
 
 Persist each Task's Session ID, capability alias, attempt number, and latest structured result at `.superpowers/sdd/<plan>/task-N-claude-state.json`. Keep the native task brief/report/progress artifacts authoritative; this adapter file is not a second ledger.
 
@@ -62,7 +62,7 @@ For fix rounds 4–5, generate a new UUID and provide the native task brief, pri
 
 Default to `--permission-mode acceptEdits`. Never use `bypassPermissions` or `--dangerously-skip-permissions`.
 
-If Claude needs a permission outside the automatic Task families, it returns `PERMISSION_REQUIRED` with exact requests. Show the requested tool/command, scope, and reason to the user. On approval, resume the same Session with only the approved additional `--allowedTools` entries.
+If Claude returns `PERMISSION_REQUIRED`, read and apply [claude-permission-broker.md](claude-permission-broker.md). Record every added rule in the Task state before resuming.
 
 `--allowedTools` suppresses prompts for matching tools; it is not an availability boundary. When the task needs an explicit tool boundary, set `--tools` to the required built-ins and use `--disallowedTools` for explicit denials. Managed denials always win.
 
@@ -76,7 +76,7 @@ Validate the structured payload against the bundled schema and verify its `sessi
 | `DONE_WITH_CONCERNS` | Present concerns; Codex/user decides whether Review can start |
 | `NEEDS_CONTEXT` | Supply only listed `context_requests` and resume the same Session |
 | `BLOCKED` | Stop the Task and report the blocker |
-| `PERMISSION_REQUIRED` | Obtain user approval or stop |
+| `PERMISSION_REQUIRED` | Apply the Codex permission broker |
 
 Treat invalid JSON/Schema, missing required fields or native SDD artifacts, a violated permission protocol, wrong Session ID, timeout, CLI absence, authentication/quota/service failure, or failed resume as backend failure. Preserve native SDD state and report:
 

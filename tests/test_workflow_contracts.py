@@ -1,4 +1,5 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -88,8 +89,42 @@ class MattLifecycleTests(unittest.TestCase):
         self.assertIn("do not push, merge, amend, rebase, reset, or tag", text)
         self.assertIn("do not add a cross-ticket final review or verify review", text)
 
+    def test_skill_names_the_native_review_as_one_two_axis_review(self):
+        skill = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text()
+        self.assertIn("native two-axis Codex Review", skill)
+        self.assertNotIn("dual Codex Review", skill)
+
+
+class AgentWritingStandardsTests(unittest.TestCase):
+    def test_orchestration_skills_are_explicitly_user_invoked(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            text = (ROOT / "skills" / skill / "SKILL.md").read_text()
+            self.assertIn("disable-model-invocation: true", text.split("---", 2)[1])
+            self.assertNotIn("Use when the user explicitly invokes", text)
+
+    def test_schema_is_passed_verbatim_without_becoming_required_context(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            text = (ROOT / "skills" / skill / "SKILL.md").read_text()
+            self.assertIn("Pass the bundled result Schema verbatim", text)
+            self.assertNotIn("and its [result Schema]", text)
+
+    def test_cross_runtime_skill_packages_validate(self):
+        result = subprocess.run(
+            ["python3", "scripts/validate_skill_packages.py"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 class ClaudeExecutionProtocolTests(unittest.TestCase):
+    def load_permission_broker(self, skill: str) -> str:
+        return (
+            ROOT / "skills" / skill / "references/claude-permission-broker.md"
+        ).read_text()
+
     def test_noninteractive_runs_preapprove_task_scoped_command_families(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
             protocol = (
@@ -124,6 +159,53 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
             self.assertIn("shell/interpreter wildcard", protocol)
             self.assertIn("push", protocol)
             self.assertIn("history rewriting", protocol)
+
+    def test_codex_brokers_new_tool_permissions_without_interrupting_the_user(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            protocol = (
+                ROOT
+                / "skills"
+                / skill
+                / "references"
+                / "claude-execution-protocol.md"
+            ).read_text()
+            broker = self.load_permission_broker(skill)
+            self.assertIn("claude-permission-broker.md", protocol)
+            self.assertNotIn("## Codex permission broker", protocol)
+            self.assertIn("`Read`, `Glob`, and `Grep`", broker)
+            self.assertIn("read-only CLI", broker)
+            self.assertIn("read-only MCP", broker)
+            self.assertIn("resume the same Session automatically", broker)
+            self.assertIn("Continue without user interaction", broker)
+            self.assertIn("unavailable to Claude Code", broker)
+            self.assertNotIn("Obtain user approval or stop", protocol)
+
+    def test_codex_escalates_only_side_effectful_or_ambiguous_permissions(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            broker = self.load_permission_broker(skill)
+            self.assertIn("outside the repository/worktree", broker)
+            self.assertIn("external write", broker)
+            self.assertIn("installation", broker)
+            self.assertIn("cannot classify", broker)
+            self.assertIn("ask the user", broker.lower())
+
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("Codex permission broker", readme)
+        self.assertIn("without interrupting the user", readme)
+
+    def test_permission_broker_has_one_authoritative_source_and_hard_copies(self):
+        canonical = (ROOT / "shared/claude-permission-broker.md").read_text()
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            self.assertEqual(self.load_permission_broker(skill), canonical)
+
+        result = subprocess.run(
+            ["python3", "scripts/sync_shared_references.py", "--check"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class SuperpowersStateTests(unittest.TestCase):

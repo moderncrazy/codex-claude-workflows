@@ -4,7 +4,7 @@
 
 Run Claude in the trusted repository/worktree used by native Matt `implement`. Use non-interactive print mode. Do not configure or inspect the provider behind Claude Code; `sonnet` and `opus` are capability aliases selected by the work unit.
 
-Read [claude-result.schema.json](claude-result.schema.json) and pass its JSON text to `--json-schema`.
+Pass [claude-result.schema.json](claude-result.schema.json) verbatim to `--json-schema` as machine input.
 
 For a Ticket, capture the Review fixed-point baseline before implementation and keep the Session ID in the Ticket's existing progress/comment channel. For an implicit task, keep the Session ID in the active Codex conversation. Do not create an extra ledger.
 
@@ -63,7 +63,7 @@ If the original Session cannot resume, report infrastructure failure. Do not cre
 
 Default to `--permission-mode acceptEdits`. Never use `bypassPermissions` or `--dangerously-skip-permissions`.
 
-When a permission outside the automatic work-unit families is required, Claude returns `PERMISSION_REQUIRED` with exact requests. Show tool/command, scope, and reason to the user. If approved, resume the same Session with only the approved additional `--allowedTools` entries.
+If Claude returns `PERMISSION_REQUIRED`, read and apply [claude-permission-broker.md](claude-permission-broker.md). Before resuming, record every added rule in the Ticket progress/comment channel or the active conversation for an implicit task.
 
 `--allowedTools` suppresses prompts; it does not limit availability. Use `--tools` and `--disallowedTools` for actual tool boundaries. Managed denials always win.
 
@@ -77,7 +77,7 @@ Validate the structured payload against the bundled schema and verify its `sessi
 | `DONE_WITH_CONCERNS` | Present concerns; Codex/user decides whether Review can start |
 | `NEEDS_CONTEXT` | Supply only listed `context_requests` and resume the same Session |
 | `BLOCKED` | Preserve native blocker state and report |
-| `PERMISSION_REQUIRED` | Obtain user approval or stop |
+| `PERMISSION_REQUIRED` | Apply the Codex permission broker |
 
 Treat invalid JSON/Schema, missing required native Matt artifacts, a violated permission protocol, wrong Session ID, timeout, CLI absence, authentication/quota/service failure, Session creation failure, or failed resume as backend failure. Preserve native Ticket blockers and report:
 

@@ -5,7 +5,7 @@ Two explicit Codex orchestration Skills that keep native workflow management in 
 本项目包含两套互相独立的薄编排 Skill：
 
 - `superpowers-claude-workflow`：保留 Superpowers 的需求分析、Plan、SDD、Task Review、Final Review 和分支收尾流程。
-- `matt-claude-workflow`：保留 Matt Pocock Skills 的需求澄清、Spec、Tickets、TDD seam、双 Reviewer、提交和 Tracker 流程。
+- `matt-claude-workflow`：保留 Matt Pocock Skills 的需求澄清、Spec、Tickets、TDD seam、双轴 Review、提交和 Tracker 流程。
 
 它们只替换原生工作流中的 Implementer。不会修改上游 Skill，不使用 Hook、Plugin、SessionStart 注入或全局路由状态。
 
@@ -31,6 +31,7 @@ skills/
 │   ├── agents/openai.yaml
 │   └── references/
 │       ├── executor-contract.md
+│       ├── claude-permission-broker.md
 │       ├── claude-execution-protocol.md
 │       └── claude-result.schema.json
 └── matt-claude-workflow/
@@ -38,8 +39,12 @@ skills/
     ├── agents/openai.yaml
     └── references/
         ├── executor-contract.md
+        ├── claude-permission-broker.md
         ├── claude-execution-protocol.md
         └── claude-result.schema.json
+
+shared/claude-permission-broker.md       # authoritative source
+scripts/sync_shared_references.py        # updates packaged hard copies
 ```
 
 ## Prerequisites
@@ -66,7 +71,7 @@ cp -R skills/superpowers-claude-workflow ~/.agents/skills/superpowers-claude-wor
 cp -R skills/matt-claude-workflow ~/.agents/skills/matt-claude-workflow
 ```
 
-Remove or rename an existing destination before copying, so an old installation cannot leave stale files behind. The Skills intentionally set `allow_implicit_invocation: false`.
+Remove or rename an existing destination before copying, so an old installation cannot leave stale files behind. Each copied Skill is self-contained. The Skills set both `disable-model-invocation: true` and `allow_implicit_invocation: false`.
 
 ## Usage
 
@@ -151,9 +156,10 @@ Claude's `DONE` result never replaces native independent Review.
 - Never use `bypassPermissions` or `--dangerously-skip-permissions`.
 - Executor approval also approves task-scoped command families for the named test, formatter, lint, and typecheck actions. For example, an approved `.venv/bin/pytest ...` command becomes `Bash(.venv/bin/pytest *)`, so focused tests, the full suite, and `pytest --version` do not require separate prompts.
 - Pre-approve local `git status` and `git diff` inspection. Keep checkpoint `git add` and `git commit` authorization exact.
-- Request commands outside those families with exact scope and reason.
+- Use the Codex permission broker for commands and tools outside those families. Codex automatically approves repository-scoped, task-relevant read-only built-ins, narrow CLI inspections, and exact read-only MCP tools, then resumes the same Claude Session without interrupting the user.
+- Ask the user only for side effects, scope expansion, external writes, installation, new credentials, destructive operations, or requests Codex cannot classify confidently.
 - Never broadly allow a shell/interpreter, package installation, network access, push, deployment, or history rewriting.
-- Resume the same Session after user-approved permissions.
+- If a tool is unavailable to Claude Code, Codex may supply equivalent read-only analysis but must not take over implementation.
 - Respect managed denials.
 - Report CLI, authentication, quota, service, timeout, JSON/Schema, permission-protocol, native-artifact, and Session failures.
 - Never silently fall back from Claude Code to Codex.
@@ -162,11 +168,11 @@ An executor change requires explicit user direction, an updated contract, revali
 
 ## Validation
 
-Validate each Skill with Codex's Skill validator:
+Validate the cross-runtime Skill packages and their generated hard copies:
 
 ```bash
-python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/superpowers-claude-workflow
-python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/matt-claude-workflow
+python3 scripts/validate_skill_packages.py
+python3 scripts/sync_shared_references.py --check
 python3 -m json.tool skills/superpowers-claude-workflow/references/claude-result.schema.json
 python3 -m json.tool skills/matt-claude-workflow/references/claude-result.schema.json
 python3 -m unittest tests/test_workflow_contracts.py -v

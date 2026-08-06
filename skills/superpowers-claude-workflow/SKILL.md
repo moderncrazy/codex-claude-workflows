@@ -1,6 +1,7 @@
 ---
 name: superpowers-claude-workflow
-description: Use when the user explicitly invokes $superpowers-claude-workflow for a Superpowers feature that needs per-Task implementer routing.
+description: Run a Superpowers feature workflow with per-Task Codex and Claude implementer routing.
+disable-model-invocation: true
 ---
 
 # Superpowers Claude Workflow
@@ -11,7 +12,7 @@ Keep Superpowers as workflow owner. Adapt only its SDD implementer dispatch whil
 
 ## Required references
 
-Before writing the Plan, read [executor-contract.md](references/executor-contract.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md) and its [result Schema](references/claude-result.schema.json).
+Before writing the Plan, read [executor-contract.md](references/executor-contract.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md). Pass the bundled result Schema verbatim as machine input; keep it out of agent guidance.
 
 ## Workflow
 
