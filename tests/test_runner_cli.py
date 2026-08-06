@@ -262,6 +262,66 @@ class RunnerCliTests(unittest.TestCase):
             self.assertNotEqual(running.returncode, 0, stderr + stdout)
             self.assertEqual(json.loads(state_path.read_text())["status"], "interrupted")
 
+            resumed = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+            self.assertEqual(resumed["status"], "implementation_complete")
+            recovered_state = json.loads(state_path.read_text())
+            self.assertNotIn("control_requested", recovered_state["runtime"])
+
+    def test_reopening_or_repairing_invalidates_prior_finish_authorization(self) -> None:
+        for mode in ("resume", "repair"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = self.make_repo(directory)
+                state_dir = self.init_work_unit(root, f"2d20555b-83d8-4c18-9306-6858e0149d{1 if mode == 'resume' else 2:02d}")
+                environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="success")
+                self.run_cli("run", "--state-dir", str(state_dir), environment=environment)
+                self.run_cli(
+                    "record-verification",
+                    "--state-dir",
+                    str(state_dir),
+                    "--command",
+                    "python3 -m unittest",
+                    "--exit-code",
+                    "0",
+                    "--evidence-ref",
+                    "verified",
+                )
+                self.run_cli("finish", "--state-dir", str(state_dir))
+
+                if mode == "resume":
+                    self.run_cli(
+                        "resume",
+                        "--state-dir",
+                        str(state_dir),
+                        "--segment-id",
+                        "segment-1",
+                        environment=environment,
+                    )
+                else:
+                    self.run_cli(
+                        "add-repair-segment",
+                        "--state-dir",
+                        str(state_dir),
+                        "--scope",
+                        "repair finding",
+                        "--finding-id",
+                        "F-1",
+                    )
+
+                rejected = self.run_cli(
+                    "cleanup",
+                    "--state-dir",
+                    str(state_dir),
+                    "--native-workflow-complete",
+                    expected=2,
+                )
+                self.assertIn(rejected["error"], {"finish_required", "segments_incomplete", "verification_required"})
+                self.assertTrue(state_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

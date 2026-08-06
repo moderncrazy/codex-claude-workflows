@@ -139,6 +139,16 @@ class StateStoreTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             WorkUnitState.from_dict(state)
 
+        state = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        state["status"] = "invented"
+        with self.assertRaises(ContractError):
+            WorkUnitState.from_dict(state)
+
+        state = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        state["segments"][0]["status"] = "invented"
+        with self.assertRaises(ContractError):
+            WorkUnitState.from_dict(state)
+
 
 if __name__ == "__main__":
     unittest.main()

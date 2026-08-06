@@ -76,19 +76,28 @@ def main() -> int:
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
 
+    status = {
+        "needs-context": "NEEDS_CONTEXT",
+        "blocked": "BLOCKED",
+        "structured-permission": "PERMISSION_REQUIRED",
+    }.get(scenario, "DONE" if scenario != "invalid-result" else "INVENTED")
     emit(
         {
             "type": "result",
             "session_id": session_id,
             "structured_output": {
-                "status": "DONE" if scenario != "invalid-result" else "INVENTED",
+                "status": status,
                 "summary": "fixture complete",
                 "session_id": session_id,
                 "commits": [],
                 "tests": [{"command": "fixture-test", "status": "passed", "summary": "passed"}],
                 "concerns": [],
-                "context_requests": [],
-                "permission_requests": [],
+                "context_requests": ["missing fixture detail"] if scenario == "needs-context" else [],
+                "permission_requests": (
+                    [{"tool": "Bash", "scope": "pytest --version", "reason": "inspect test tool"}]
+                    if scenario == "structured-permission"
+                    else []
+                ),
             },
         }
     )

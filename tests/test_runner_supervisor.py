@@ -121,6 +121,26 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(store.load().status, "permission_required")
             self.assertEqual(store.load().permissions["pending"]["tool_name"], "Bash")
 
+    def test_non_completion_structured_results_preserve_the_segment_for_resume(self) -> None:
+        for scenario, expected_status in (
+            ("needs-context", "interrupted"),
+            ("blocked", "interrupted"),
+            ("structured-permission", "permission_required"),
+        ):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
+                store, supervisor, _ = self.make_supervisor(Path(directory), scenario)
+
+                self.assertNotEqual(supervisor.run(), 0)
+
+                state = store.load()
+                self.assertEqual(state.status, expected_status)
+                self.assertNotEqual(state.segments[0]["status"], "complete")
+                self.assertEqual(state.result["status"], {
+                    "needs-context": "NEEDS_CONTEXT",
+                    "blocked": "BLOCKED",
+                    "structured-permission": "PERMISSION_REQUIRED",
+                }[scenario])
+
     def test_explicit_terminate_escalates_after_grace_without_pid_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store, supervisor, events = self.make_supervisor(
@@ -130,7 +150,7 @@ class SupervisorTests(unittest.TestCase):
             def request_terminate(event: dict[str, object]) -> None:
                 events.append(event)
                 if event["kind"] == "tool_started":
-                    supervisor.terminate_requested = True
+                    supervisor.terminate()
 
             supervisor.event_sink = request_terminate
 

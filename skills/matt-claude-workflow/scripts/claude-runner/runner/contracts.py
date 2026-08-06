@@ -129,7 +129,10 @@ class WorkUnitState:
             raise ContractError("executor must contain exactly agent and capability")
         if executor.get("agent") != "claude-code" or executor.get("capability") not in {"sonnet", "opus"}:
             raise ContractError("executor must use claude-code with sonnet or opus capability")
-        WorkUnitStatus(data["status"])
+        try:
+            WorkUnitStatus(data["status"])
+        except ValueError as exc:
+            raise ContractError("invalid Work Unit status") from exc
         if not isinstance(data["segments"], list) or not data["segments"]:
             raise ContractError("at least one segment is required")
         identifiers: set[str] = set()
@@ -192,7 +195,10 @@ def _validate_segment(segment: object) -> None:
         raise ContractError("segment identity, kind, scope, and created_at must be non-empty strings")
     if not isinstance(segment["verification_commands"], list) or any(not isinstance(item, str) for item in segment["verification_commands"]):
         raise ContractError("verification_commands must be an array of strings")
-    SegmentStatus(segment["status"])
+    try:
+        SegmentStatus(segment["status"])
+    except ValueError as exc:
+        raise ContractError("invalid Segment status") from exc
     if segment["session_id"] is not None:
         try:
             uuid.UUID(str(segment["session_id"]))

@@ -265,6 +265,7 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
                 current.evidence["verified"] = [
                     item for item in current.evidence["verified"] if item.get("segment_id") != target["segment_id"]
                 ]
+                current.runtime.pop("implementation_handoff_at", None)
                 if current.status == "implementation_complete":
                     current.transition_to(WorkUnitStatus.RUNNING)
 
@@ -386,6 +387,10 @@ def _cleanup(args: argparse.Namespace) -> int:
         raise CliError("unsafe_cleanup_target", "state directory must not be a symlink")
     store = StateStore(supplied)
     state = store.load()
+    if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
+        raise CliError("segments_incomplete", "all Execution Segments must be complete before cleanup")
+    if any(not _segment_verified(state, segment["segment_id"]) for segment in state.segments):
+        raise CliError("verification_required", "all Execution Segments must be reverified before cleanup")
     if not state.runtime.get("implementation_handoff_at"):
         raise CliError("finish_required", "finish must precede cleanup")
     root = Path(state.working_root).resolve()
@@ -425,6 +430,7 @@ def _add_repair(args: argparse.Namespace) -> int:
             raise CliError("verification_required", "all existing Segments require verified evidence before a Repair Segment")
         if state.status == "implementation_complete":
             state.transition_to(WorkUnitStatus.RUNNING)
+        state.runtime.pop("implementation_handoff_at", None)
         state.segments.append(
             {
                 "segment_id": f"repair-{len(state.segments) + 1}",

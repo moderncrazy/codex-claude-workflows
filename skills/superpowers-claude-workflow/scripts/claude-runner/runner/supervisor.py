@@ -154,6 +154,7 @@ class Supervisor:
                 state.runtime.setdefault("stale_runs", []).append(active)
             if state.status != "running":
                 state.transition_to(WorkUnitStatus.RUNNING)
+            state.runtime.pop("control_requested", None)
             state.runtime["active_run"] = {
                 "launch_token": self.launch_token,
                 "controller_pid": os.getpid(),
@@ -389,6 +390,9 @@ class Supervisor:
         except (OSError, json.JSONDecodeError, ContractError) as exc:
             self._backend_failure(f"structured result validation failed: {exc}")
             return 1
+        if observation.result["status"] not in {"DONE", "DONE_WITH_CONCERNS"}:
+            self._continuation_required(observation.result)
+            return 3
         self._complete(observation.result)
         self._emit("process_exited", exit_code=return_code)
         return 0
@@ -506,11 +510,37 @@ class Supervisor:
 
         self.store.update(mutate)
 
+    def _continuation_required(self, result: dict[str, object]) -> None:
+        result_status = str(result["status"])
+        target = (
+            WorkUnitStatus.PERMISSION_REQUIRED
+            if result_status == "PERMISSION_REQUIRED"
+            else WorkUnitStatus.INTERRUPTED
+        )
+
+        def mutate(state: object) -> None:
+            if state.status == "timeout_suspected":
+                state.transition_to(WorkUnitStatus.RUNNING)
+            state.data["result"] = result
+            state.transition_to(target)
+            state.runtime["pid"] = None
+            state.runtime["process_group_id"] = None
+            state.runtime["active_run"] = None
+            for segment in state.segments:
+                if segment["session_id"] == self.invocation.session_id:
+                    segment["status"] = (
+                        "permission_required" if target == WorkUnitStatus.PERMISSION_REQUIRED else "interrupted"
+                    )
+                    break
+
+        self.store.update(mutate)
+        self._emit("continuation_required", result_status=result_status, result=result)
+
     def interrupt(self) -> None:
         self._signal(signal.SIGINT)
 
     def terminate(self) -> None:
-        self._signal(signal.SIGTERM)
+        self.terminate_requested = True
 
     def _signal(self, sig: signal.Signals) -> None:
         if self.process is None or self.process.poll() is not None:
