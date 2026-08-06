@@ -230,6 +230,63 @@ class RunnerCliTests(unittest.TestCase):
                     fcntl.flock(descriptor, fcntl.LOCK_UN)
                     os.close(descriptor)
 
+    @unittest.skipIf(os.name == "nt", "POSIX lease timing regression")
+    def test_handoff_and_repair_hold_the_inactive_lease_through_state_mutation(self) -> None:
+        import fcntl
+
+        sys.path.insert(0, str(RUNNER_ROOT))
+        from runner.supervisor import active_lease_held
+
+        for action in ("finish", "repair"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = self.make_repo(directory)
+                state_dir = self.init_work_unit(
+                    root,
+                    f"ccad7b3d-e19d-43ce-b27c-c41ed894f{1 if action == 'finish' else 2:03d}",
+                )
+                self.run_cli(
+                    "run",
+                    "--state-dir",
+                    str(state_dir),
+                    environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+                )
+                state_lock = os.open(state_dir, os.O_RDONLY)
+                fcntl.flock(state_lock, fcntl.LOCK_EX)
+                arguments = [action, "--state-dir", str(state_dir)]
+                if action == "repair":
+                    arguments = [
+                        "add-repair-segment",
+                        "--state-dir",
+                        str(state_dir),
+                        "--scope",
+                        "repair finding",
+                        "--finding-id",
+                        "F-1",
+                    ]
+                running = subprocess.Popen(
+                    [sys.executable, str(ENTRYPOINT), *arguments],
+                    cwd=REPO_ROOT,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.addCleanup(lambda: running.poll() is None and running.kill())
+                lease_observed = False
+                try:
+                    for _ in range(100):
+                        if active_lease_held(state_dir):
+                            lease_observed = True
+                            break
+                        if running.poll() is not None:
+                            break
+                        time.sleep(0.01)
+                finally:
+                    fcntl.flock(state_lock, fcntl.LOCK_UN)
+                    os.close(state_lock)
+                stdout, stderr = running.communicate(timeout=5)
+                self.assertTrue(lease_observed, f"{action} did not retain the inactive lease")
+                self.assertEqual(running.returncode, 0, stderr + stdout)
+
     def test_permission_can_be_narrowly_approved_then_resumed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)

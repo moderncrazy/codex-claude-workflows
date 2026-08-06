@@ -7,9 +7,10 @@ import signal
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Mapping, Sequence
+from typing import Callable, Iterator, Literal, Mapping, Sequence
 
 from .contracts import ContractError, WorkUnitStatus, utc_now, validate_json_schema
 from .state_store import StateStore
@@ -27,7 +28,8 @@ def capture_process_identity(pid: int) -> dict[str, object]:
     return identity
 
 
-def active_lease_held(state_dir: Path) -> bool:
+@contextmanager
+def inactive_lease_guard(state_dir: Path) -> Iterator[None]:
     path = state_dir / StateStore.RAW_FILES["stdout"]
     descriptor = os.open(path, os.O_RDWR)
     if os.name == "nt":
@@ -35,22 +37,36 @@ def active_lease_held(state_dir: Path) -> bool:
 
         try:
             msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
-        except OSError:
+        except OSError as exc:
             os.close(descriptor)
-            return True
-        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-        os.close(descriptor)
-        return False
+            raise ActiveRunError("this Work Unit already has a live Runner-owned process") from exc
+        try:
+            yield
+        finally:
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            os.close(descriptor)
+        return
+
     import fcntl
 
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    except BlockingIOError as exc:
         os.close(descriptor)
+        raise ActiveRunError("this Work Unit already has a live Runner-owned process") from exc
+    try:
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def active_lease_held(state_dir: Path) -> bool:
+    try:
+        with inactive_lease_guard(state_dir):
+            return False
+    except ActiveRunError:
         return True
-    fcntl.flock(descriptor, fcntl.LOCK_UN)
-    os.close(descriptor)
-    return False
 
 
 INTERRUPT_CONTROL_SIGNAL = getattr(signal, "SIGUSR1", signal.SIGINT)

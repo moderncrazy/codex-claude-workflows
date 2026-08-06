@@ -22,6 +22,7 @@ from .supervisor import (
     ClaudeInvocation,
     Supervisor,
     active_lease_held,
+    inactive_lease_guard,
 )
 
 
@@ -387,15 +388,17 @@ def _record_verification(args: argparse.Namespace) -> int:
 
 def _finish(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
-    if active_lease_held(store.state_dir):
-        raise CliError("active_process", "cannot mark handoff while the Runner is active")
 
     def mutate(state: WorkUnitState) -> None:
         if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all Execution Segments must be complete")
         state.runtime["implementation_handoff_at"] = utc_now()
 
-    store.update(mutate)
+    try:
+        with inactive_lease_guard(store.state_dir):
+            store.update(mutate)
+    except ActiveRunError as exc:
+        raise CliError("active_process", "cannot mark handoff while the Runner is active") from exc
     _emit(_state_summary(store))
     return 0
 
@@ -407,20 +410,22 @@ def _cleanup(args: argparse.Namespace) -> int:
     if supplied.is_symlink():
         raise CliError("unsafe_cleanup_target", "state directory must not be a symlink")
     store = StateStore(supplied)
-    state = store.load()
-    if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
-        raise CliError("segments_incomplete", "all Execution Segments must be complete before cleanup")
-    if not state.runtime.get("implementation_handoff_at"):
-        raise CliError("finish_required", "finish must precede cleanup")
-    root = Path(state.working_root).resolve()
-    expected = root / ".tmp" / "codex-claude-workflows" / state.work_unit_id
-    if supplied.resolve() != expected or supplied.name != state.work_unit_id:
-        raise CliError("unsafe_cleanup_target", "state directory is outside the owned Work Unit path")
-    active = state.runtime.get("active_run")
-    if isinstance(active, dict) and active_lease_held(store.state_dir):
-        raise CliError("active_process", "cannot clean an active Work Unit")
-    state.transition_to(WorkUnitStatus.CLEANED)
-    store._write_atomic(state)
+    def mark_cleaned(state: WorkUnitState) -> None:
+        if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
+            raise CliError("segments_incomplete", "all Execution Segments must be complete before cleanup")
+        if not state.runtime.get("implementation_handoff_at"):
+            raise CliError("finish_required", "finish must precede cleanup")
+        root = Path(state.working_root).resolve()
+        expected = root / ".tmp" / "codex-claude-workflows" / state.work_unit_id
+        if supplied.resolve() != expected or supplied.name != state.work_unit_id:
+            raise CliError("unsafe_cleanup_target", "state directory is outside the owned Work Unit path")
+        state.transition_to(WorkUnitStatus.CLEANED)
+
+    try:
+        with inactive_lease_guard(store.state_dir):
+            state = store.update(mark_cleaned)
+    except ActiveRunError as exc:
+        raise CliError("active_process", "cannot clean an active Work Unit") from exc
     shutil.rmtree(supplied)
     _emit({"work_unit_id": state.work_unit_id, "state_dir": str(supplied), "status": "cleaned"})
     return 0
@@ -443,8 +448,6 @@ def _extend(args: argparse.Namespace) -> int:
 
 def _add_repair(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
-    if active_lease_held(store.state_dir):
-        raise CliError("active_process", "cannot add a Repair Segment while the Runner is active")
 
     def mutate(state: WorkUnitState) -> None:
         if any(segment["status"] != "complete" for segment in state.segments):
@@ -469,7 +472,11 @@ def _add_repair(args: argparse.Namespace) -> int:
             }
         )
 
-    store.update(mutate)
+    try:
+        with inactive_lease_guard(store.state_dir):
+            store.update(mutate)
+    except ActiveRunError as exc:
+        raise CliError("active_process", "cannot add a Repair Segment while the Runner is active") from exc
     _emit(_state_summary(store))
     return 0
 
