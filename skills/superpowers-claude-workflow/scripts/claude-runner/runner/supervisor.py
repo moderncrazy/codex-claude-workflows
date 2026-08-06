@@ -150,6 +150,8 @@ class Supervisor:
     def _reserve_launch(self) -> None:
 
         def reserve(state: object) -> None:
+            if state.permissions["pending"] is not None:
+                raise ContractError("pending permission blocks dispatch")
             active = state.runtime.get("active_run")
             if isinstance(active, dict):
                 state.runtime.setdefault("stale_runs", []).append(active)

@@ -15,6 +15,7 @@ RESULT_SCHEMA = Path(__file__).parents[1] / "skills" / "superpowers-claude-workf
 sys.path.insert(0, str(RUNNER_ROOT))
 
 from runner.permission_hooks import build_hook_settings  # noqa: E402
+from runner.contracts import ContractError  # noqa: E402
 from runner.state_store import StateStore  # noqa: E402
 from runner.supervisor import ClaudeInvocation, Supervisor  # noqa: E402
 from tests.test_runner_state import sample_work_unit  # noqa: E402
@@ -120,6 +121,24 @@ class SupervisorTests(unittest.TestCase):
 
             self.assertEqual(store.load().status, "permission_required")
             self.assertEqual(store.load().permissions["pending"]["tool_name"], "Bash")
+
+    def test_supervisor_refuses_dispatch_while_permission_is_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, _ = self.make_supervisor(Path(directory), "success")
+
+            def add_pending(state: object) -> None:
+                state.permissions["pending"] = {
+                    "request": {"tool_name": "Bash"},
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "pytest --version"},
+                    "received_at": "2026-08-06T00:00:00Z",
+                }
+
+            store.update(add_pending)
+
+            with self.assertRaises(ContractError):
+                supervisor.run()
+            self.assertEqual(store.load().status, "initialized")
 
     def test_non_completion_structured_results_preserve_the_segment_for_resume(self) -> None:
         for scenario, expected_status in (

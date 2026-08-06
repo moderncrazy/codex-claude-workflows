@@ -217,6 +217,8 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(stopped["permissions"]["pending"]["tool_name"], "Bash")
             bypass = self.run_cli("resume", "--state-dir", str(state_dir), expected=2)
             self.assertEqual(bypass["error"], "pending_permission")
+            fresh_run_bypass = self.run_cli("run", "--state-dir", str(state_dir), expected=2)
+            self.assertEqual(fresh_run_bypass["error"], "pending_permission")
 
             self.run_cli(
                 "approve-permission",

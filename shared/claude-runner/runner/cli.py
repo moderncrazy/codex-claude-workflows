@@ -240,8 +240,8 @@ def _segment_verified(state: WorkUnitState, segment_id: str) -> bool:
 def _run(args: argparse.Namespace, *, resume: bool) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
-    if resume and state.permissions["pending"] is not None:
-        raise CliError("pending_permission", "approve or deny the pending permission before resume")
+    if state.permissions["pending"] is not None:
+        raise CliError("pending_permission", "approve or deny the pending permission before dispatch")
     if args.segment_id:
         segment = next((item for item in state.segments if item["segment_id"] == args.segment_id), None)
         if segment is None:
