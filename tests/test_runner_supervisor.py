@@ -99,13 +99,16 @@ class SupervisorTests(unittest.TestCase):
 
     def test_timeout_observation_does_not_terminate_process(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store, supervisor, events = self.make_supervisor(Path(directory), "model-idle", model_idle_seconds=0.03)
+            store, supervisor, events = self.make_supervisor(
+                Path(directory), "model-idle", model_idle_seconds=0.03, heartbeat_seconds=0.02
+            )
 
             self.assertEqual(supervisor.run(), 0)
 
             timeout_events = [event for event in events if event["kind"] == "timeout_suspected"]
             self.assertTrue(timeout_events)
             self.assertEqual(timeout_events[0]["clock"], "model")
+            self.assertTrue(any(event["kind"] == "heartbeat" for event in events))
             self.assertEqual(store.load().status, "implementation_complete")
 
     def test_permission_hook_stop_is_not_completion(self) -> None:

@@ -17,6 +17,12 @@ RESULT_SCHEMA = REPO_ROOT / "skills" / "superpowers-claude-workflow" / "referenc
 
 
 class RunnerCliTests(unittest.TestCase):
+    def test_default_claude_executable_remains_path_resolvable(self) -> None:
+        sys.path.insert(0, str(RUNNER_ROOT))
+        from runner.cli import _executable_value
+
+        self.assertEqual(_executable_value(Path("claude")), "claude")
+
     def make_repo(self, directory: str, *, ignored: bool = True) -> Path:
         root = Path(directory).resolve()
         subprocess.run(["git", "init", "-q", str(root)], check=True)

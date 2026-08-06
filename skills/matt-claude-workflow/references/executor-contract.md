@@ -44,3 +44,7 @@ The user's natural-language instruction or direct Ticket edit has highest priori
 | T3 | codex | — | Codex-only authorization |
 
 Reject the batch before executing affected work units when a contract is missing/invalid or concurrently available Tickets claim overlapping files or shared mutable state.
+
+## Execution Segments
+
+The executor contract selects the Ticket or implicit-task implementer. Codex may define sequential Execution Segments immediately before Claude dispatch to bound a large implementation. Segments never appear in a Spec, Ticket, Tracker, or implicit-task contract and never change native work-unit scope.

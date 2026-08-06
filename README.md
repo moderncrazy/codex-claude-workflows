@@ -1,67 +1,60 @@
 # Codex Claude Workflows
 
-Two explicit Codex orchestration Skills that keep native workflow management in Codex while routing approved implementation work to Claude Code.
+Two explicit Codex orchestration Skills that preserve their native workflow while routing approved implementation work to Claude Code:
 
-本项目包含两套互相独立的薄编排 Skill：
+- `superpowers-claude-workflow` keeps Superpowers requirements, Plan, SDD state, Task Reviews, Final Review, verification, and branch finishing.
+- `matt-claude-workflow` keeps Matt requirements, Spec/Tickets or implicit task, TDD seams, native two-axis Review, commits, and Tracker state.
 
-- `superpowers-claude-workflow`：保留 Superpowers 的需求分析、Plan、SDD、Task Review、Final Review 和分支收尾流程。
-- `matt-claude-workflow`：保留 Matt Pocock Skills 的需求澄清、Spec、Tickets、TDD seam、双轴 Review、提交和 Tracker 流程。
+Direct use of the original Skills is unchanged. There is no Codex plugin, SessionStart injection, global hook, global daemon, global routing file, or upstream Skill patch.
 
-它们只替换原生工作流中的 Implementer。不会修改上游 Skill，不使用 Hook、Plugin、SessionStart 注入或全局路由状态。
+## Ownership
 
-## Responsibilities
-
-| Responsibility | Owner |
+| Concern | Owner |
 |---|---|
-| Requirements and domain decisions | Codex + user |
-| Design, Plan, Spec and Tickets | Codex through native Skills |
-| Implementation | Claude Code by default; Codex when explicitly routed |
-| Test-seam decisions | Codex + user |
-| Independent code review | Native Codex reviewers |
-| Verification, commits and workflow completion | Native workflow |
+| Requirements, Design, Plan/Spec/Tickets | Codex through the native workflow |
+| Executor selection | Persisted native Task/Ticket contract or confirmed implicit contract |
+| Claude process supervision | Packaged per-Work-Unit Runner |
+| Permission classification | Codex permission broker |
+| Review, verification, commits, completion | Native Codex workflow |
 
-Directly invoking the original Superpowers or Matt Skills remains unchanged. Claude routing activates only when one of the two Skills in this repository is explicitly invoked.
+Claude is the default coding implementer. Codex still handles documentation, configuration, workflow decisions, Review, and explicitly Codex-routed implementation.
 
-## Repository layout
+## Architecture
+
+The Python-standard-library Runner is canonical under `shared/claude-runner/` and hard-copied into both standalone Skill packages under `scripts/claude-runner/`. Symlinks are never used.
+
+Each Claude-owned native Task/Ticket/implicit task receives one Work Unit at:
 
 ```text
-skills/
-├── superpowers-claude-workflow/
-│   ├── SKILL.md
-│   ├── agents/openai.yaml
-│   └── references/
-│       ├── executor-contract.md
-│       ├── claude-permission-broker.md
-│       ├── claude-execution-protocol.md
-│       └── claude-result.schema.json
-└── matt-claude-workflow/
-    ├── SKILL.md
-    ├── agents/openai.yaml
-    └── references/
-        ├── executor-contract.md
-        ├── claude-permission-broker.md
-        ├── claude-execution-protocol.md
-        └── claude-result.schema.json
-
-shared/claude-permission-broker.md       # authoritative source
-scripts/sync_shared_references.py        # updates packaged hard copies
+<active-worktree>/.tmp/codex-claude-workflows/<work-unit-id>/
+├── work-unit.json
+├── raw-events.jsonl
+└── raw-stderr.log
 ```
+
+Execution Segments are temporary Runner checkpoints defined by Codex immediately before dispatch. They do not change the native Plan, Spec, Ticket, Tracker, or task scope.
 
 ## Prerequisites
 
 - Codex with Agent Skills support.
+- Python 3.
 - Claude Code CLI available as `claude`.
-- For `superpowers-claude-workflow`: the native Superpowers Skills used by the workflow.
-- For `matt-claude-workflow`: `grill-with-docs` or `grill-me`, `to-spec`, `to-tickets`, `implement`, `tdd`, and `code-review` as required by the selected path.
-- Matt multi-Ticket work also requires the issue tracker expected by the native Matt Skills.
+- The native Skills required by the chosen workflow.
+- Matt multi-Ticket work also needs the issue tracker configured by its native Skills.
 
-The repository selects only the capability aliases `sonnet` and `opus`. Configure the actual Claude Code model provider, gateway, and model mapping in the user's Claude Code environment.
+The workflow selects only the capability aliases `sonnet` and `opus`. Configure their concrete backend mapping in Claude Code; the Runner neither inspects nor enforces it.
+
+Before fixing the implementation baseline, add this tracked repository rule if absent:
+
+```gitignore
+/.tmp/
+```
+
+The Runner validates the rule but never edits `.gitignore` itself.
 
 ## Installation
 
-Codex and Claude Code recognize personal Skills under `~/.agents/skills/`.
-
-Clone this repository and copy the Skills into the personal Skills directory:
+Copy the packages; do not symlink them:
 
 ```bash
 git clone <repository-url>
@@ -71,37 +64,19 @@ cp -R skills/superpowers-claude-workflow ~/.agents/skills/superpowers-claude-wor
 cp -R skills/matt-claude-workflow ~/.agents/skills/matt-claude-workflow
 ```
 
-Remove or rename an existing destination before copying, so an old installation cannot leave stale files behind. Each copied Skill is self-contained. The Skills set both `disable-model-invocation: true` and `allow_implicit_invocation: false`.
+Remove or rename an old destination before copying so stale files cannot survive. Both Skills are explicitly user-invoked (`disable-model-invocation: true`, `allow_implicit_invocation: false`).
 
 ## Usage
-
-### Superpowers
 
 ```text
 Use $superpowers-claude-workflow to take this feature from requirements through reviewed implementation.
 ```
 
-The workflow:
-
-1. uses native brainstorming and writing-plans;
-2. writes an executor contract for every Plan Task;
-3. accepts only SDD-eligible Plans;
-4. uses native SDD state and Codex Review;
-5. keeps native Final Review and branch finishing.
-
-### Matt
-
 ```text
 Use $matt-claude-workflow to turn this requirement into reviewed implementation.
 ```
 
-Single-session work uses an in-conversation implicit task without creating a Ticket. Multi-session work uses native `to-spec` and `to-tickets`; each Ticket receives an independent Claude Code Session and preserves native blocking relationships.
-
-Before native commit-based `code-review`, the selected implementer creates a local review checkpoint commit. It never pushes or rewrites history. After accepted Review and verification, Codex resolves the Ticket through the configured Tracker and recomputes the native frontier.
-
-## Executor contract
-
-Claude implementation:
+The native workflow writes executor contracts such as:
 
 ```yaml
 executor:
@@ -110,72 +85,56 @@ executor:
   reason: bounded implementation following approved interfaces
 ```
 
-Codex implementation:
+Use `opus` for material architecture, consistency, concurrency, security, migration, or difficult-debugging risk. Use `agent: codex` for an explicit override or a genuine Codex-only context/tool/authorization dependency.
 
-```yaml
-executor:
-  agent: codex
-  reason: requires an authorization available only in the current Codex session
-```
+## Runner behavior
 
-Rules:
+The packaged entry point exposes `init`, `run`, `resume`, `status`, `wait`, `approve-permission`, `extend`, `interrupt`, `terminate`, `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
 
-- `agent` is `claude-code` or `codex`.
-- `model` is required only for Claude Code and is `sonnet` or `opus`.
-- `sonnet` is the default capability tier.
-- Use `opus` for material architecture, security, concurrency, migration, consistency, or debugging risk.
-- User instructions and persisted Plan/Ticket edits have highest priority.
+Claude runs non-interactively with `stream-json`. The Runner appends a local progress MCP server without strict MCP replacement, so user-configured tools such as CodeGraph remain available. Unknown tool events are stored exactly and remain opaque.
 
-## Claude Code execution
+Three evidence levels stay distinct:
 
-Claude runs in non-interactive mode with a structured JSON result:
+- **Progress Claim:** Claude-authored `report_progress` content; useful but unverified.
+- **Runtime Fact:** Runner-observed heartbeat, process state, Session, byte offset, or timeout suspicion.
+- **Execution Evidence:** exact raw stdout/stderr plus Codex-recorded verification.
 
-```text
-claude -p
-  --session-id <uuid>
-  --model <sonnet|opus>
-  --permission-mode acceptEdits
-  --output-format json
-  --json-schema <schema-json>
-  <task-prompt>
-```
+Compact Runner events are shown by default. Codex reads raw evidence only when needed.
 
-Supported result states:
+## Timeouts and recovery
 
-- `DONE`
-- `DONE_WITH_CONCERNS`
-- `NEEDS_CONTEXT`
-- `BLOCKED`
-- `PERMISSION_REQUIRED`
+Model-idle, unmatched-tool, and Work Unit thresholds emit `timeout_suspected`; they never kill Claude. Codex decides whether to extend, interrupt, or terminate. Adapter state survives backend failure and can be inspected with `status` before a deliberate resume.
 
-Claude's `DONE` result never replaces native independent Review.
+Each new Execution Segment gets a fresh Session. Permission/context continuation resumes the active Segment Session. Cross-Segment Review findings receive a Codex-defined Repair Segment.
 
 ## Permissions and failures
 
-- Default to `acceptEdits`.
-- Never use `bypassPermissions` or `--dangerously-skip-permissions`.
-- Executor approval also approves task-scoped command families for the named test, formatter, lint, and typecheck actions. For example, an approved `.venv/bin/pytest ...` command becomes `Bash(.venv/bin/pytest *)`, so focused tests, the full suite, and `pytest --version` do not require separate prompts.
-- Pre-approve local `git status` and `git diff` inspection. Keep checkpoint `git add` and `git commit` authorization exact.
-- Use the Codex permission broker for commands and tools outside those families. Codex automatically approves repository-scoped, task-relevant read-only built-ins, narrow CLI inspections, and exact read-only MCP tools, then resumes the same Claude Session without interrupting the user.
-- Ask the user only for side effects, scope expansion, external writes, installation, new credentials, destructive operations, or requests Codex cannot classify confidently.
-- Never broadly allow a shell/interpreter, package installation, network access, push, deployment, or history rewriting.
-- If a tool is unavailable to Claude Code, Codex may supply equivalent read-only analysis but must not take over implementation.
-- Respect managed denials.
-- Report CLI, authentication, quota, service, timeout, JSON/Schema, permission-protocol, native-artifact, and Session failures.
-- Never silently fall back from Claude Code to Codex.
+The Runner injects per-invocation Claude permission Hooks. A request is recorded verbatim and Claude stops immediately; the mechanism does not depend on prompt obedience.
 
-An executor change requires explicit user direction, an updated contract, revalidation, and renewed approval.
+The Codex permission broker automatically approves repository-scoped, task-relevant read-only built-ins, narrow CLI inspections, exact read-only MCP operations, and version/help probes. It adds one narrow rule and resumes without interrupting the user. It asks the user for side effects, external scope/writes, installation, credentials, remote changes, destructive actions, scope expansion, or ambiguous effects.
 
-## Validation
+Never broadly allow an interpreter, shell, package installation, network access, push, deployment, history rewriting, or Agent delegation. Managed denials win.
 
-Validate the cross-runtime Skill packages and their generated hard copies:
+CLI absence, authentication/quota/service errors, malformed stream/Hook/Reporter/state, wrong Session, unsafe process identity, or failed resume are reported as backend failures. Codex never silently takes over implementation; changing executor requires updated native state and approval.
 
-```bash
-python3 scripts/validate_skill_packages.py
-python3 scripts/sync_shared_references.py --check
-python3 -m json.tool skills/superpowers-claude-workflow/references/claude-result.schema.json
-python3 -m json.tool skills/matt-claude-workflow/references/claude-result.schema.json
-python3 -m unittest tests/test_workflow_contracts.py -v
+## Completion and cleanup
+
+Runner `implementation_complete` means implementation handoff only. It does not replace Superpowers Review/finishing or Matt Review/Tracker completion. Only after native completion may Codex call:
+
+```text
+cleanup --native-workflow-complete
 ```
 
-The two Skills are packaged separately on purpose. Framework-specific state, Review, repair, and completion semantics must not be combined into a shared runtime orchestrator.
+Cleanup validates the repository root, UUID, real path, symlink boundary, and inactive process before removing exactly that Work Unit directory.
+
+## Development and validation
+
+```bash
+python3 scripts/sync_shared_assets.py
+python3 scripts/sync_shared_assets.py --check
+python3 scripts/validate_skill_packages.py
+python3 -m json.tool shared/claude-runner/work-unit.schema.json
+python3 -m unittest discover -s tests -v
+```
+
+`sync_shared_assets.py --check` is read-only. The generated Runner copies must match the canonical tree byte-for-byte and mode-for-mode.

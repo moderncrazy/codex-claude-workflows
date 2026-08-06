@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -46,6 +48,38 @@ def validate(skill_name: str) -> list[str]:
     interface = yaml.safe_load((skill_dir / "agents/openai.yaml").read_text())
     if interface.get("policy", {}).get("allow_implicit_invocation") is not False:
         errors.append("agents/openai.yaml must disable implicit invocation")
+    runner = skill_dir / "scripts/claude-runner"
+    required_runner_files = {
+        "claude_runner.py",
+        "work-unit.schema.json",
+        "runner/__init__.py",
+        "runner/cli.py",
+        "runner/contracts.py",
+        "runner/permission_hooks.py",
+        "runner/progress_mcp.py",
+        "runner/state_store.py",
+        "runner/stream_capture.py",
+        "runner/supervisor.py",
+    }
+    for relative in sorted(required_runner_files):
+        if not (runner / relative).is_file():
+            errors.append(f"missing packaged Runner asset: {relative}")
+    if any(path.is_symlink() for path in skill_dir.rglob("*")):
+        errors.append("Skill package must contain hard copies, not symlinks")
+    entrypoint = runner / "claude_runner.py"
+    if entrypoint.exists():
+        if not entrypoint.stat().st_mode & 0o111:
+            errors.append("packaged Runner entrypoint must be executable")
+        result = subprocess.run(
+            [sys.executable, str(entrypoint), "--help"],
+            cwd=Path("/tmp"),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            errors.append(f"packaged Runner is not self-contained: {result.stderr.strip()}")
     return [f"{skill_name}: {error}" for error in errors]
 
 

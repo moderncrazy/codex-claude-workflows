@@ -141,8 +141,8 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
             self.assertIn("`Bash(git status *)`", protocol)
             self.assertIn("`Bash(git diff *)`", protocol)
             self.assertIn("`--allowedTools`", protocol)
-            self.assertIn("`This command requires approval`", protocol)
-            self.assertIn("return `PERMISSION_REQUIRED` immediately", protocol)
+            self.assertIn("`PermissionRequest`", protocol)
+            self.assertIn("stop Claude outside the prompt", protocol)
 
     def test_broad_or_dangerous_command_families_remain_forbidden(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
@@ -199,7 +199,7 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
             self.assertEqual(self.load_permission_broker(skill), canonical)
 
         result = subprocess.run(
-            ["python3", "scripts/sync_shared_references.py", "--check"],
+            ["python3", "scripts/sync_shared_assets.py", "--check"],
             cwd=ROOT,
             text=True,
             capture_output=True,
@@ -208,13 +208,66 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
-class SuperpowersStateTests(unittest.TestCase):
-    def test_claude_state_uses_a_deterministic_native_workspace_filename(self):
-        protocol = (
-            ROOT
-            / "skills/superpowers-claude-workflow/references/claude-execution-protocol.md"
-        ).read_text()
-        self.assertIn("task-N-claude-state.json", protocol)
+class PackagedRunnerTests(unittest.TestCase):
+    def test_runner_assets_are_exact_hard_copies_without_symlinks(self):
+        canonical = ROOT / "shared/claude-runner"
+        expected = {
+            path.relative_to(canonical): (path.read_bytes(), path.stat().st_mode & 0o111)
+            for path in canonical.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        }
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            skill_root = ROOT / "skills" / skill
+            packaged = skill_root / "scripts/claude-runner"
+            actual = {
+                path.relative_to(packaged): (path.read_bytes(), path.stat().st_mode & 0o111)
+                for path in packaged.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            }
+            self.assertEqual(actual, expected)
+            self.assertFalse(any(path.is_symlink() for path in skill_root.rglob("*")))
+
+    def test_packaged_entrypoints_are_self_contained(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            entrypoint = ROOT / "skills" / skill / "scripts/claude-runner/claude_runner.py"
+            result = subprocess.run(
+                ["python3", str(entrypoint), "--help"],
+                cwd=Path("/tmp"),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class RunnerWorkflowBoundaryTests(unittest.TestCase):
+    def test_skills_route_only_the_implementation_boundary_through_packaged_runner(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            skill_dir = ROOT / "skills" / skill
+            combined = "\n".join(path.read_text() for path in skill_dir.rglob("*.md"))
+            self.assertIn("scripts/claude-runner/claude_runner.py", combined)
+            self.assertIn("/.tmp/", combined)
+            self.assertIn("Execution Segment", combined)
+            self.assertIn("implementation_complete", combined)
+            self.assertIn("not native completion", combined.lower())
+            for forbidden in (
+                "--output-format json",
+                "--strict-mcp-config",
+                "--include-partial-messages",
+                "bypassPermissions",
+                "task-N-claude-state.json",
+            ):
+                self.assertNotIn(forbidden, combined)
+
+    def test_superpowers_and_matt_keep_distinct_native_completion_contracts(self):
+        superpowers = (ROOT / "skills/superpowers-claude-workflow/SKILL.md").read_text().lower()
+        matt = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text().lower()
+        self.assertIn("final review", superpowers)
+        self.assertIn("verification-before-completion", superpowers)
+        self.assertIn("finishing-a-development-branch", superpowers)
+        self.assertIn("native two-axis codex review", matt)
+        self.assertIn("tracker", matt)
+        self.assertIn("do not add a cross-ticket final review or verify review", matt)
 
 
 if __name__ == "__main__":

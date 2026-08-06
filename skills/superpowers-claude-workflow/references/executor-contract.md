@@ -44,3 +44,7 @@ Before SDD, show:
 | Task 3 | codex | — | Codex-only authorization |
 
 Reject the Plan before execution if any Task lacks a valid contract or if two concurrently available Tasks claim overlapping files/state.
+
+## Execution Segments
+
+The executor contract selects the native Task implementer. It does not describe Runner mechanics. Immediately before a Claude-owned Task is dispatched, Codex may divide that Task into sequential Execution Segments for bounded checkpoints. Never write Segment IDs, Session IDs, permissions, or Runner state into the Plan.

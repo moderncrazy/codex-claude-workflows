@@ -8,43 +8,41 @@ disable-model-invocation: true
 
 ## Overview
 
-Keep Matt's Skills as workflow owner. Adapt only implementation while preserving Spec/Ticket state, test seams, native two-axis Codex Review, commits, and tracker behavior. Leave original Skills unchanged.
+Keep Matt's Skills as workflow owner. Adapt only implementation while preserving Spec/Ticket state, test seams, native two-axis Codex Review, commits, and Tracker behavior.
 
 ## Required references
 
-Before routing work, read [executor-contract.md](references/executor-contract.md) and [matt-lifecycle-adapter.md](references/matt-lifecycle-adapter.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md). Pass the bundled result Schema verbatim as machine input; keep it out of agent guidance.
+Before routing, read [executor-contract.md](references/executor-contract.md) and [matt-lifecycle-adapter.md](references/matt-lifecycle-adapter.md). Before Claude dispatch, read [claude-execution-protocol.md](references/claude-execution-protocol.md). Pass the bundled result Schema verbatim as machine input.
 
 ## Workflow
 
-1. **Preflight.** Confirm the native Skills and tracker setup required by the selected path. Check `claude` only when a work unit may select it. Stop on missing dependencies; do not substitute, install, or patch Skills.
-2. **Clarify.** **REQUIRED SUB-SKILL:** Use `grill-with-docs` when durable glossary/ADR documentation is useful; otherwise use `grill-me`. Let Codex own requirements, domain decisions, unresolved questions, and approval.
-3. **Choose scale.** Use the implicit-task path for one cohesive session. Use the Spec/Ticket path for cross-session work or multiple tracer bullets.
-4. **Confirm seams.** **REQUIRED SUB-SKILL:** Use `tdd` to select the highest useful public test seams. Obtain the confirmation required by the native flow.
-5. **Implement.** **REQUIRED SUB-SKILL:** Use `implement` as workflow owner. Apply the implementer and lifecycle adapters.
-6. **Review and complete.** Follow the lifecycle adapter for the local review checkpoint, **REQUIRED SUB-SKILL:** `code-review`, user-directed fixes, and native Tracker completion.
+1. **Preflight.** Confirm native Skills, Tracker setup, Python 3, and Claude Code. Add tracked `/.tmp/` to `.gitignore` before the fixed point when absent. Do not substitute, install, or patch Skills.
+2. **Clarify.** **REQUIRED SUB-SKILL:** Use `grill-with-docs` when durable docs help; otherwise use `grill-me`. Codex owns requirements, domain decisions, and approval.
+3. **Choose scale.** Use an implicit task for one native work unit; use native Spec/Tickets for cross-session work or multiple tracer bullets.
+4. **Confirm seams.** **REQUIRED SUB-SKILL:** Use `tdd` and obtain the native confirmation.
+5. **Implement.** **REQUIRED SUB-SKILL:** Use `implement` as workflow owner. Apply the adapters only at implementer dispatch.
+6. **Review and complete.** Follow the lifecycle adapter: local review checkpoint, native two-axis Codex Review, user-directed fixes, verification, commit, and Tracker completion.
 
-## Implicit-task path
+## Native paths
 
-Present one in-conversation executor contract with scope, acceptance criteria, fixed point, and confirmed seams. Obtain approval. Do not create a Ticket or routing file. If the work reveals independent slices, durable blockers, or cross-session coordination, stop and use the Spec/Ticket path.
-
-## Spec/Ticket path
-
-1. **REQUIRED SUB-SKILL:** Use `to-spec`. Add the overall routing policy without assigning each Ticket there.
-2. **REQUIRED SUB-SKILL:** Use `to-tickets`. Add one executor contract per Ticket and preserve native blocking edges.
-3. Show Ticket, agent, capability model, and reason. Persist overrides, revalidate, and obtain user approval before implementation.
-4. Process only unblocked Tickets. Claim and resolve them through the configured Tracker as defined by the lifecycle adapter. Do not create another ledger.
+- **Implicit task:** confirm one in-conversation executor contract, scope, acceptance criteria, fixed point, and seams. Create no Ticket or routing file.
+- **Spec/Tickets:** **REQUIRED SUB-SKILL:** Use `to-spec`, then `to-tickets`. Put one executor contract on each Ticket, preserve blockers, and keep the Tracker as the only Ticket ledger.
 
 ## Implementer adapter
 
-- For `agent: codex`, use the native Codex implementation path.
-- For `agent: claude-code`, invoke the protocol with the Ticket/implicit brief, Spec, confirmed seams, scope, tests, repository, and fixed point.
-- Create a fresh Claude Session for each Ticket. Keep its ID in the Ticket's existing progress/comment channel. Never reuse a Session across Tickets.
-- Keep all source, test, documentation, and configuration changes for a work unit with its selected implementer.
+- `agent: codex`: use native Codex implementation unchanged.
+- `agent: claude-code`: create one Runner Work Unit for the Ticket/implicit task, define Execution Segments immediately before dispatch, and run this Skill's `scripts/claude-runner/claude_runner.py`.
+- Never store Runner Session, permission, or Segment data in the Ticket. Runner state lives only under ignored `.tmp/codex-claude-workflows/<work-unit-id>/`.
+- Keep all work-unit changes with the selected implementer. Never silently fall back to Codex.
+
+## Completion boundary
+
+Runner `implementation_complete` is not native completion. The native two-axis Codex Review, accepted verification, local commits, and Tracker transition remain mandatory. Do not add a cross-Ticket Final Review or Verify Review. Clean the Runner UUID directory only afterward.
 
 ## Common mistakes
 
-- Replacing `to-spec`/`to-tickets` with generic PRD/issue Skills.
-- Creating a pseudo-Ticket for an implicit task.
-- Reusing Claude Sessions across Tickets.
-- Running commit-based Review before a local checkpoint commit exists.
-- Auto-fixing Review findings or silently falling back to Codex.
+- Replacing `to-spec`/`to-tickets` with generic issue Skills.
+- Persisting Execution Segments in a Spec, Ticket, or Tracker.
+- Reusing one Session across native work units.
+- Auto-fixing Review findings or routing Review to Claude.
+- Adding global hooks, a daemon, a plugin, or upstream Skill changes.

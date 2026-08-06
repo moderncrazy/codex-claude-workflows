@@ -8,40 +8,39 @@ disable-model-invocation: true
 
 ## Overview
 
-Keep Superpowers as workflow owner. Adapt only its SDD implementer dispatch while preserving native design, state, reviews, verification, and branch completion. Leave direct calls to original Superpowers Skills unchanged.
+Keep Superpowers as workflow owner. Adapt only the SDD implementer boundary; leave direct calls to original Superpowers Skills unchanged.
 
 ## Required references
 
-Before writing the Plan, read [executor-contract.md](references/executor-contract.md). Before invoking or resuming Claude Code, read [claude-execution-protocol.md](references/claude-execution-protocol.md). Pass the bundled result Schema verbatim as machine input; keep it out of agent guidance.
+Before the Plan, read [executor-contract.md](references/executor-contract.md). Before Claude dispatch, read [claude-execution-protocol.md](references/claude-execution-protocol.md). Pass the bundled result Schema verbatim as machine input.
 
 ## Workflow
 
-1. **Preflight.** Confirm the required native Superpowers Skills exist. Check `claude` only when a Task may select it. Stop on missing or incompatible dependencies; do not install or patch them.
-2. **Design.** **REQUIRED SUB-SKILL:** Use `superpowers:brainstorming`. Let Codex own exploration, decisions, the Design, self-review, and user approval. Record only the overall implementation-routing policy in the Design.
-3. **Plan.** **REQUIRED SUB-SKILL:** Use `superpowers:writing-plans`. Let Codex write the Plan. Add one valid executor contract to every Plan Task.
-4. **Gate.** Confirm that Tasks are sufficiently independent, executable in the current session, compatible with native SDD task/report state, and free of overlapping ownership. Validate every executor contract. If any condition fails, stop; do not switch to `superpowers:executing-plans` or inline coding.
-5. **Confirm.** Show Task, agent, capability model, and reason. Persist user overrides into the Plan, revalidate, and obtain approval.
-6. **Execute.** **REQUIRED SUB-SKILL:** Use `superpowers:subagent-driven-development` as workflow owner. Follow its workspace, brief, report, progress, dependency, Review, Fix Loop, and completion rules. At each implementer dispatch, apply the adapter below.
-7. **Finish.** Keep the native whole-branch Codex Final Review. **REQUIRED SUB-SKILL:** Use `superpowers:finishing-a-development-branch`. Do not add another final verification layer.
+1. **Preflight.** Confirm native Skills, Python 3, and Claude Code. In the active worktree, add tracked `/.tmp/` to `.gitignore` before recording the fixed point when absent. Do not install or patch dependencies.
+2. **Design.** **REQUIRED SUB-SKILL:** Use `superpowers:brainstorming`. Codex owns requirements, decisions, Design, self-review, and approval.
+3. **Plan.** **REQUIRED SUB-SKILL:** Use `superpowers:writing-plans`. Add one executor contract to each native Plan Task. Do not add Runner Work Units or Execution Segments to the Plan.
+4. **Gate and confirm.** Require SDD-compatible independent Tasks, validate contracts, show Task/agent/capability/reason, persist overrides, and obtain approval.
+5. **Execute.** **REQUIRED SUB-SKILL:** Use `superpowers:subagent-driven-development`. Preserve its workspace, brief, report, progress, Review, Fix Loop, and completion rules. Apply the adapter only when dispatching each implementer.
+6. **Finish.** Keep native Task Review and whole-branch Final Review. **REQUIRED SUB-SKILL:** Use `superpowers:verification-before-completion`, then `superpowers:finishing-a-development-branch`. Add no extra universal review layer.
 
 ## Implementer adapter
 
-- For `agent: codex`, dispatch the native Codex implementer.
-- For `agent: claude-code`, invoke the execution protocol with the native task brief, scope, acceptance criteria, tests, worktree, and native `task-N-report.md` path.
-- Keep every Task's source, tests, documentation, and configuration with its selected implementer. Do not edit a Claude-owned Task opportunistically.
-- Store the Claude Session ID and result in `.superpowers/sdd/<plan>/`. Require the native Task report. Do not create another ledger.
+- `agent: codex`: use the native Codex implementer unchanged.
+- `agent: claude-code`: create one Runner Work Unit for the native Task, define Execution Segments immediately before dispatch, and run this Skill's `scripts/claude-runner/claude_runner.py`.
+- Keep native `.superpowers` artifacts authoritative. Runner state lives only under ignored `.tmp/codex-claude-workflows/<work-unit-id>/`.
+- Keep source, tests, documentation, and configuration with the selected implementer. Never silently fall back to Codex.
 
 ## Review and fixes
 
-- Keep native Codex Spec Review, Code Quality Review, and whole-branch Final Review.
-- Resume the original Claude Session for Fix Loop rounds 1–3.
-- Start a fresh Session for rounds 4–5. Upgrade `sonnet` to `opus`; keep a fresh `opus` when already upgraded.
-- Re-run native reviews after fixes. Never treat Claude self-checks or `DONE` as Review.
+- Codex performs native Spec Review, Code Quality Review, Final Review, and verification.
+- Route a finding owned by one Segment back to that Segment Session. Create a Codex-defined Repair Segment for cross-Segment findings.
+- Preserve native Fix Loop rounds 1–5: resume for rounds 1–3; use a fresh Session for rounds 4–5 and upgrade `sonnet` to `opus`.
+- Runner `implementation_complete` is not native completion. Clean its UUID directory only after native finishing completes.
 
 ## Common mistakes
 
 - Starting at SDD instead of requirements.
+- Persisting Execution Segments in the native Plan.
 - Routing Review or branch finishing to Claude.
-- Creating custom state, hooks, plugins, or global routing files.
-- Treating a new Session as a resumed Session.
-- Silently using Codex after a Claude failure.
+- Treating a Progress Claim as verified evidence.
+- Adding global hooks, a daemon, a plugin, or upstream Skill changes.
