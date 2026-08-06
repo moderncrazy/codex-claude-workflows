@@ -18,7 +18,7 @@ Replace direct, opaque Claude Code invocations in `superpowers-claude-workflow` 
 
 ### Native Workflow
 
-Superpowers continues to own brainstorming, Design, Plan Tasks, SDD state, per-Task Spec and quality Review, whole-branch Final Review, verification, and branch finishing. Matt continues to own Spec, Ticket or implicit-task state, TDD seams, fixed-point Review, commits, Tracker transitions, and its native user-approved fix behavior.
+Superpowers continues to own brainstorming, Design, Plan Tasks, SDD state, per-Task Spec and quality Review, whole-branch Final Review, verification, and branch finishing. Matt continues to own Spec, Ticket or implicit-task state, TDD seams, fixed-point Review, Review disposition, fixes, commits, and any Tracker transitions defined by its configured native workflow.
 
 ### Codex
 
@@ -120,7 +120,7 @@ Crossing a configured threshold emits `TIMEOUT_SUSPECTED` with only Runtime Fact
 
 ## Failure and recovery
 
-The Runner exposes commands to initialize, run, wait, inspect, approve a permission rule, extend an observation threshold, interrupt, terminate, record verification, finish, and clean up a Work Unit. State and process identity allow Codex to inspect or regain control after its own task or application restarts; there is no cross-project daemon.
+The Runner exposes commands to initialize, run, wait, inspect, approve a permission rule, extend an observation threshold, interrupt, terminate, optionally record verification evidence, finish, and clean up a Work Unit. Recorded evidence does not gate native Review, repair, verification, or completion. State and process identity allow Codex to inspect or regain control after its own task or application restarts; there is no cross-project daemon.
 
 Runner crashes, corrupt state, unsafe process identity, missing or incompatible Python or Claude CLI, authentication, quota, service failure, Session creation or resume failure, Reporter or Hook failure, and invalid stream protocol are Claude Backend Failures. The workflow preserves Adapter State and never silently falls back to Codex implementation. The user may repair and resume Claude, explicitly change and reapprove the executor contract, or exit.
 

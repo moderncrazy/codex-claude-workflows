@@ -16,12 +16,12 @@ Before routing, read [executor-contract.md](references/executor-contract.md) and
 
 ## Workflow
 
-1. **Preflight.** Confirm native Skills, Tracker setup, Python 3, and Claude Code. Add tracked `/.tmp/` to `.gitignore` before the fixed point when absent. Do not substitute, install, or patch Skills.
+1. **Preflight.** Confirm native Skills, Python 3, and Claude Code. Require Tracker setup only for the Spec/Ticket path. Add tracked `/.tmp/` to `.gitignore` before the fixed point when absent. Do not substitute, install, or patch Skills.
 2. **Clarify.** **REQUIRED SUB-SKILL:** Use `grill-with-docs` when durable docs help; otherwise use `grill-me`. Codex owns requirements, domain decisions, and approval.
 3. **Choose scale.** Use an implicit task for one native work unit; use native Spec/Tickets for cross-session work or multiple tracer bullets.
 4. **Confirm seams.** **REQUIRED SUB-SKILL:** Use `tdd` and obtain the native confirmation.
 5. **Implement.** **REQUIRED SUB-SKILL:** Use `implement` as workflow owner. Apply the adapters only at implementer dispatch.
-6. **Review and complete.** Follow the lifecycle adapter: local review checkpoint, native two-axis Codex Review, user-directed fixes, verification, commit, and Tracker completion.
+6. **Review and complete.** Follow the lifecycle adapter while native `implement`, `code-review`, and configured Tracker instructions decide Review disposition, fixes, verification, commits, and completion.
 
 ## Native paths
 
@@ -37,12 +37,12 @@ Before routing, read [executor-contract.md](references/executor-contract.md) and
 
 ## Completion boundary
 
-Runner `implementation_complete` is not native completion. The native two-axis Codex Review, accepted verification, local commits, and Tracker transition remain mandatory. Do not add a cross-Ticket Final Review or Verify Review. Clean the Runner UUID directory only afterward.
+Runner `implementation_complete` is not native completion. Native Review, verification, and commit requirements remain mandatory; configured Tracker transitions apply only to the Ticket path. Do not add a cross-Ticket Final Review or Verify Review. Clean the Runner UUID directory only after native completion.
 
 ## Common mistakes
 
 - Replacing `to-spec`/`to-tickets` with generic issue Skills.
 - Persisting Execution Segments in a Spec, Ticket, or Tracker.
 - Reusing one Session across native work units.
-- Auto-fixing Review findings or routing Review to Claude.
+- Letting the adapter decide Review disposition instead of routing the implementation action selected by the native workflow.
 - Adding global hooks, a daemon, a plugin, or upstream Skill changes.

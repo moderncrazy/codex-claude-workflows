@@ -44,6 +44,8 @@ _Avoid_: Self-check, completion claim
 The authoritative Task, Ticket, Review, verification, and completion state maintained by the Native Workflow.
 _Avoid_: Runner state
 
+The Native Workflow decides what happens next. Adapter State and Execution Evidence may describe or support a native transition; they never authorize or block it.
+
 **Adapter State**:
 The temporary execution state needed to supervise Claude Code for one Work Unit. It never replaces Native State.
 _Avoid_: Ticket state, workflow ledger

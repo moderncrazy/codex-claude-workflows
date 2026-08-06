@@ -124,7 +124,7 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(result["error"], "tmp_not_ignored")
             self.assertFalse((root / ".tmp").exists())
 
-    def test_success_lifecycle_requires_verification_and_native_cleanup_assertion(self) -> None:
+    def test_success_lifecycle_uses_optional_evidence_and_native_cleanup_assertion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)
             state_dir = self.init_work_unit(root, "63b4821f-15b1-474c-9664-d9d272cc05ad")
@@ -156,20 +156,6 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(wait_lines[-1]["status"], "implementation_complete")
             rejected = self.run_cli("cleanup", "--state-dir", str(state_dir), expected=2)
             self.assertEqual(rejected["error"], "native_completion_required")
-            unfinished = self.run_cli("finish", "--state-dir", str(state_dir), expected=2)
-            self.assertEqual(unfinished["error"], "verification_required")
-
-            self.run_cli(
-                "record-verification",
-                "--state-dir",
-                str(state_dir),
-                "--command",
-                "python3 -m unittest",
-                "--exit-code",
-                "0",
-                "--evidence-ref",
-                "raw-events.jsonl#2",
-            )
             finished = self.run_cli("finish", "--state-dir", str(state_dir))
             self.assertEqual(finished["status"], "implementation_complete")
             cleaned = self.run_cli(
@@ -180,6 +166,32 @@ class RunnerCliTests(unittest.TestCase):
             )
             self.assertEqual(cleaned["status"], "cleaned")
             self.assertFalse(state_dir.exists())
+
+    def test_optional_verification_evidence_is_still_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "72c1c652-8835-47e1-8c91-08320f938134")
+            self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+
+            self.run_cli(
+                "record-verification",
+                "--state-dir",
+                str(state_dir),
+                "--command",
+                "python3 -m unittest",
+                "--exit-code",
+                "0",
+                "--evidence-ref",
+                "native-verification.log",
+            )
+
+            state = json.loads((state_dir / "work-unit.json").read_text())
+            self.assertEqual(state["evidence"]["verified"][-1]["evidence_ref"], "native-verification.log")
 
     def test_permission_can_be_narrowly_approved_then_resumed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -435,17 +447,6 @@ class RunnerCliTests(unittest.TestCase):
                 state_dir = self.init_work_unit(root, f"2d20555b-83d8-4c18-9306-6858e0149d{1 if mode == 'resume' else 2:02d}")
                 environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="success")
                 self.run_cli("run", "--state-dir", str(state_dir), environment=environment)
-                self.run_cli(
-                    "record-verification",
-                    "--state-dir",
-                    str(state_dir),
-                    "--command",
-                    "python3 -m unittest",
-                    "--exit-code",
-                    "0",
-                    "--evidence-ref",
-                    "verified",
-                )
                 self.run_cli("finish", "--state-dir", str(state_dir))
 
                 if mode == "resume":
@@ -475,7 +476,7 @@ class RunnerCliTests(unittest.TestCase):
                     "--native-workflow-complete",
                     expected=2,
                 )
-                self.assertIn(rejected["error"], {"finish_required", "segments_incomplete", "verification_required"})
+                self.assertIn(rejected["error"], {"finish_required", "segments_incomplete"})
                 self.assertTrue(state_dir.exists())
 
 

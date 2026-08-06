@@ -71,23 +71,41 @@ class SharedResultSchemaTests(unittest.TestCase):
 
 
 class MattLifecycleTests(unittest.TestCase):
-    def test_commit_review_and_tracker_lifecycle_is_explicit(self):
+    def test_native_workflow_owns_review_fixes_and_tracker_transitions(self):
         skill = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text()
         lifecycle = ROOT / "skills/matt-claude-workflow/references/matt-lifecycle-adapter.md"
         self.assertTrue(lifecycle.exists())
         self.assertIn("matt-lifecycle-adapter.md", skill)
 
         text = lifecycle.read_text().lower()
-        checkpoint = text.index("review checkpoint commit")
-        review = text.index("native `code-review`", checkpoint)
-        resolve = text.index("resolve or close the ticket", review)
-        frontier = text.index("recompute the native frontier", resolve)
-        self.assertLess(checkpoint, review)
-        self.assertLess(review, resolve)
-        self.assertLess(resolve, frontier)
-        self.assertIn("claim the ticket", text)
+        self.assertIn("native workflow", text)
+        self.assertIn("compatibility checkpoint", text)
+        self.assertIn("only when", text)
+        self.assertIn("configured tracker", text)
         self.assertIn("do not push, merge, amend, rebase, reset, or tag", text)
         self.assertIn("do not add a cross-ticket final review or verify review", text)
+        for invasive_policy in (
+            "user-directed fixes",
+            "do not start fixes automatically",
+            "when the user requests fixes",
+            "apply only user-requested fixes",
+            "claim the ticket",
+            "resolve or close the ticket",
+            "recompute the native frontier",
+        ):
+            self.assertNotIn(invasive_policy, (skill + text).lower())
+
+    def test_implicit_task_does_not_require_tracker_setup(self):
+        skill = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text().lower()
+        self.assertIn("tracker setup only for the spec/ticket path", skill)
+
+    def test_matt_review_continuation_routes_without_new_adapter_gate(self):
+        protocol = (
+            ROOT
+            / "skills/matt-claude-workflow/references/claude-execution-protocol.md"
+        ).read_text().lower()
+        self.assertIn("native workflow routes a finding back to implementation", protocol)
+        self.assertNotIn("accepted finding", protocol)
 
     def test_skill_names_the_native_review_as_one_two_axis_review(self):
         skill = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text()
@@ -268,6 +286,35 @@ class RunnerWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn("native two-axis codex review", matt)
         self.assertIn("tracker", matt)
         self.assertIn("do not add a cross-ticket final review or verify review", matt)
+
+    def test_sequential_native_work_may_overlap_files(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            contract = (
+                ROOT / "skills" / skill / "references/executor-contract.md"
+            ).read_text().lower()
+            self.assertIn("actually run concurrently", contract)
+            self.assertIn("sequential", contract)
+            self.assertNotIn("concurrently available", contract)
+
+    def test_standalone_docs_and_configuration_remain_with_codex(self):
+        skill = (ROOT / "skills/superpowers-claude-workflow/SKILL.md").read_text().lower()
+        self.assertIn("standalone documentation", skill)
+        self.assertIn("remain with codex", skill)
+        self.assertNotIn(
+            "keep source, tests, documentation, and configuration with the selected implementer",
+            skill,
+        )
+
+    def test_runner_evidence_does_not_gate_native_lifecycle(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            protocol = (
+                ROOT
+                / "skills"
+                / skill
+                / "references/claude-execution-protocol.md"
+            ).read_text().lower()
+            self.assertIn("optional adapter evidence", protocol)
+            self.assertIn("native workflow decides when verification is required", protocol)
 
 
 if __name__ == "__main__":

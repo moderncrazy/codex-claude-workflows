@@ -38,9 +38,9 @@ Injected `PermissionRequest` and `PermissionDenied` Hooks stop Claude outside th
 
 ## Results, Review, and cleanup
 
-Validate Session and structured result, then independently inspect diff, tests, commits, and native artifacts. Record only Codex-verified evidence with `record-verification`. `finish` marks implementation handoff only: Runner `implementation_complete` is not native completion.
+Validate Session and structured result, then inspect the artifacts required by the Native Workflow. `record-verification` stores optional adapter evidence; the Native Workflow decides when verification is required. `finish` marks implementation handoff only: Runner `implementation_complete` is not native completion.
 
-For an accepted finding owned by one Segment, resume that Session. For cross-Segment findings, add a Codex-defined Repair Segment. Native `code-review` and user control determine finding ownership and fixes.
+When the Native Workflow routes a finding back to implementation, resume its owning Segment Session. For cross-Segment findings, add a Codex-defined Repair Segment. The adapter does not decide Review disposition.
 
 Malformed streams, wrong Session, missing result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve state and report it to the user. When evidence proves Claude rejected a Session before creating it, use `restart-segment-session` with the exact Segment and reason, then `run`; the abandoned Session remains recorded. Do not silently implement with Codex.
 

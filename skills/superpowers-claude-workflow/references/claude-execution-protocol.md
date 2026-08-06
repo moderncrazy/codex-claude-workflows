@@ -38,7 +38,7 @@ Injected `PermissionRequest` and `PermissionDenied` Hooks stop Claude outside th
 
 ## Results, Review, and cleanup
 
-Validate Session and structured result, then independently inspect native report, diff, tests, and commits. Record only Codex-verified evidence with `record-verification`; a Progress Claim cannot satisfy it. `finish` marks implementation handoff only: Runner `implementation_complete` is not native completion.
+Validate Session and structured result, then inspect the artifacts required by the Native Workflow. `record-verification` stores optional adapter evidence and a Progress Claim cannot satisfy native verification. The Native Workflow decides when verification is required. `finish` marks implementation handoff only: Runner `implementation_complete` is not native completion.
 
 For one-Segment findings, resume that Session. For cross-Segment findings, add a Repair Segment. Preserve native rounds and capability escalation.
 

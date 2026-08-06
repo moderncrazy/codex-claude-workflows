@@ -97,22 +97,6 @@ class NativeShapedWorkflowTests(unittest.TestCase):
         return entrypoint, Path(result["state_dir"])
 
     def verify_finish_cleanup(self, entrypoint: Path, state_dir: Path, root: Path) -> None:
-        current = self.call(entrypoint, "status", "--state-dir", str(state_dir))
-        last_segment = current["segments"][-1]["segment_id"]
-        self.call(
-            entrypoint,
-            "record-verification",
-            "--state-dir",
-            str(state_dir),
-            "--command",
-            "python3 -m unittest",
-            "--exit-code",
-            "0",
-            "--evidence-ref",
-            "raw-events.jsonl",
-            "--segment-id",
-            last_segment,
-        )
         self.call(entrypoint, "finish", "--state-dir", str(state_dir))
         sibling = state_dir.parent / "must-survive"
         sibling.mkdir()
@@ -147,22 +131,6 @@ class NativeShapedWorkflowTests(unittest.TestCase):
             )
             first = self.call(entrypoint, "resume", "--state-dir", str(state_dir), scenario="success")
             self.assertEqual(first["status"], "running")
-            blocked = self.call(entrypoint, "run", "--state-dir", str(state_dir), scenario="success", expected=2)
-            self.assertEqual(blocked["error"], "segment_verification_required")
-            self.call(
-                entrypoint,
-                "record-verification",
-                "--state-dir",
-                str(state_dir),
-                "--command",
-                "verify checkpoint 1",
-                "--exit-code",
-                "0",
-                "--evidence-ref",
-                "raw-events.jsonl#segment-1",
-                "--segment-id",
-                "segment-1",
-            )
             second = self.call(entrypoint, "run", "--state-dir", str(state_dir), scenario="success")
             self.assertEqual(second["status"], "implementation_complete")
             self.assertEqual([segment["attempt"] for segment in second["segments"]], [2, 1])
@@ -183,20 +151,6 @@ class NativeShapedWorkflowTests(unittest.TestCase):
 
             initial = self.call(entrypoint, "run", "--state-dir", str(state_dir), scenario="success")
             self.assertEqual(initial["status"], "implementation_complete")
-            self.call(
-                entrypoint,
-                "record-verification",
-                "--state-dir",
-                str(state_dir),
-                "--command",
-                "verify checkpoint 1",
-                "--exit-code",
-                "0",
-                "--evidence-ref",
-                "raw-events.jsonl#segment-1",
-                "--segment-id",
-                "segment-1",
-            )
             resumed = self.call(
                 entrypoint,
                 "resume",
@@ -207,20 +161,6 @@ class NativeShapedWorkflowTests(unittest.TestCase):
                 scenario="success",
             )
             self.assertEqual(resumed["status"], "implementation_complete")
-            self.call(
-                entrypoint,
-                "record-verification",
-                "--state-dir",
-                str(state_dir),
-                "--command",
-                "verify review fix",
-                "--exit-code",
-                "0",
-                "--evidence-ref",
-                "raw-events.jsonl#segment-1-review-fix",
-                "--segment-id",
-                "segment-1",
-            )
             repair = self.call(
                 entrypoint,
                 "add-repair-segment",

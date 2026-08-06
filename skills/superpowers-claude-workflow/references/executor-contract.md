@@ -43,7 +43,7 @@ Before SDD, show:
 | Task 2 | claude-code | opus | security-sensitive migration |
 | Task 3 | codex | — | Codex-only authorization |
 
-Reject the Plan before execution if any Task lacks a valid contract or if two concurrently available Tasks claim overlapping files/state.
+Reject the Plan before execution if any Task lacks a valid contract. Check overlapping files or shared state only for Tasks the controller will actually run concurrently; sequential Tasks may overlap.
 
 ## Execution Segments
 

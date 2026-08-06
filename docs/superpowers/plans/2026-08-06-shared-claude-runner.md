@@ -500,7 +500,7 @@ Exercise this complete sequence with the fake Claude fixture:
 ```text
 init → run → status → permission_required → approve-permission → resume
 → timeout_suspected → extend → run → implementation_complete
-→ record-verification → finish → cleanup
+→ finish → cleanup
 ```
 
 Assert `cleanup` fails before `finish`, `finish` does not claim native completion, and every command emits one compact JSON object suitable for Codex parsing.
@@ -534,7 +534,7 @@ wait                    print new Runner events until terminal/interrupted
 approve-permission      add one Codex-supplied narrow rule and clear the matching request
 extend                  update one warning threshold or acknowledge one observation
 interrupt/terminate     explicit process-group control
-record-verification     append Codex-verified command/status/evidence reference
+record-verification     optionally append Codex-verified command/status/evidence reference
 finish                  mark implementation handoff complete after all Segments
 cleanup                 remove exactly the owned UUID directory after native completion is asserted by Codex
 report-progress         serve the Reporter MCP subprocess
@@ -670,9 +670,9 @@ For Review fixes, map a finding to the relevant Segment Session; create a Repair
 
 - [ ] **Step 4: Update the Matt adapter**
 
-Keep Spec, Ticket/implicit-task, fixed point, TDD seams, review checkpoint commit, two-axis `code-review`, user-approved fixes, Tracker resolution, and frontier recomputation unchanged. Store no Runner state in the Tracker beyond the human-meaningful implementation result and commit/test evidence already required by Matt.
+Keep Spec, Ticket/implicit-task, fixed point, TDD seams, the compatibility checkpoint required by commit-range `code-review`, and the two-axis `code-review`. Let the Native Workflow decide Review disposition, fixes, and any operations defined by the configured Tracker. Store no Runner state in the Tracker.
 
-For an accepted single-Segment finding, resume that Session. For cross-Segment findings, let Codex add a Repair Segment; do not add Final Review or Verify Review.
+When the Native Workflow routes a single-Segment finding back to implementation, resume that Session. For cross-Segment findings, let Codex add a Repair Segment; do not add Final Review or Verify Review.
 
 - [ ] **Step 5: Replace prompt-dependent permissions with Runner semantics**
 

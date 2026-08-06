@@ -258,10 +258,10 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
     segment_index = next(index for index, item in enumerate(state.segments) if item["segment_id"] == segment["segment_id"])
     if not resume and segment_index > 0:
         predecessor = state.segments[segment_index - 1]
-        if predecessor["status"] != "complete" or not _segment_verified(state, predecessor["segment_id"]):
+        if predecessor["status"] != "complete":
             raise CliError(
-                "segment_verification_required",
-                f"verify {predecessor['segment_id']} before starting {segment['segment_id']}",
+                "segment_incomplete",
+                f"complete {predecessor['segment_id']} before starting {segment['segment_id']}",
             )
     if resume:
         if not segment["session_id"]:
@@ -391,8 +391,6 @@ def _finish(args: argparse.Namespace) -> int:
     def mutate(state: WorkUnitState) -> None:
         if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all Execution Segments must be complete")
-        if any(not _segment_verified(state, segment["segment_id"]) for segment in state.segments):
-            raise CliError("verification_required", "Codex must record successful verification before handoff")
         state.runtime["implementation_handoff_at"] = utc_now()
 
     store.update(mutate)
@@ -410,8 +408,6 @@ def _cleanup(args: argparse.Namespace) -> int:
     state = store.load()
     if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
         raise CliError("segments_incomplete", "all Execution Segments must be complete before cleanup")
-    if any(not _segment_verified(state, segment["segment_id"]) for segment in state.segments):
-        raise CliError("verification_required", "all Execution Segments must be reverified before cleanup")
     if not state.runtime.get("implementation_handoff_at"):
         raise CliError("finish_required", "finish must precede cleanup")
     root = Path(state.working_root).resolve()
@@ -447,8 +443,8 @@ def _add_repair(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
-        if any(segment["status"] != "complete" or not _segment_verified(state, segment["segment_id"]) for segment in state.segments):
-            raise CliError("verification_required", "all existing Segments require verified evidence before a Repair Segment")
+        if any(segment["status"] != "complete" for segment in state.segments):
+            raise CliError("segments_incomplete", "all existing Segments must be complete before a Repair Segment")
         if state.status == "implementation_complete":
             state.transition_to(WorkUnitStatus.RUNNING)
         state.runtime.pop("implementation_handoff_at", None)

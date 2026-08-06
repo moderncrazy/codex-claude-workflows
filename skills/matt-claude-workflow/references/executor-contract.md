@@ -43,7 +43,7 @@ The user's natural-language instruction or direct Ticket edit has highest priori
 | T2 | claude-code | opus | security-sensitive migration |
 | T3 | codex | — | Codex-only authorization |
 
-Reject the batch before executing affected work units when a contract is missing/invalid or concurrently available Tickets claim overlapping files or shared mutable state.
+Reject affected work units when a contract is missing or invalid. Check overlapping files or shared mutable state only for work units the controller will actually run concurrently; sequential Tickets may overlap.
 
 ## Execution Segments
 

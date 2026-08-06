@@ -16,7 +16,7 @@ Before the Plan, read [executor-contract.md](references/executor-contract.md). B
 
 ## Workflow
 
-1. **Preflight.** Confirm native Skills, Python 3, and Claude Code. In the active worktree, add tracked `/.tmp/` to `.gitignore` before recording the fixed point when absent. Do not install or patch dependencies.
+1. **Preflight.** Confirm native Skills, Python 3, and Claude Code. In the active worktree, add tracked `/.tmp/` to `.gitignore` before recording the fixed point when absent. Keep installed workflow dependencies unchanged; project dependency work remains governed by the approved native Plan.
 2. **Design.** **REQUIRED SUB-SKILL:** Use `superpowers:brainstorming`. Codex owns requirements, decisions, Design, self-review, and approval.
 3. **Plan.** **REQUIRED SUB-SKILL:** Use `superpowers:writing-plans`. Add one executor contract to each native Plan Task. Do not add Runner Work Units or Execution Segments to the Plan.
 4. **Gate and confirm.** Require SDD-compatible independent Tasks, validate contracts, show Task/agent/capability/reason, persist overrides, and obtain approval.
@@ -28,7 +28,7 @@ Before the Plan, read [executor-contract.md](references/executor-contract.md). B
 - `agent: codex`: use the native Codex implementer unchanged.
 - `agent: claude-code`: create one Runner Work Unit for the native Task, define Execution Segments immediately before dispatch, and run this Skill's `scripts/claude-runner/claude_runner.py`.
 - Keep native `.superpowers` artifacts authoritative. Runner state lives only under ignored `.tmp/codex-claude-workflows/<work-unit-id>/`.
-- Keep source, tests, documentation, and configuration with the selected implementer. Never silently fall back to Codex.
+- Keep every change required inside a Claude-routed coding Task with Claude. Standalone documentation, planning, configuration, and ordinary edits remain with Codex. Never silently fall back to Codex for a Claude-routed coding Task.
 
 ## Review and fixes
 

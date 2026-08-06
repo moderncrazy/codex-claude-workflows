@@ -17,7 +17,7 @@ Direct use of the original Skills is unchanged. There is no Codex plugin, Sessio
 | Permission classification | Codex permission broker |
 | Review, verification, commits, completion | Native Codex workflow |
 
-Claude is the default coding implementer. Codex still handles documentation, configuration, workflow decisions, Review, and explicitly Codex-routed implementation.
+Claude is the default coding implementer. Changes required inside a Claude-routed coding work unit stay with Claude; standalone documentation, planning, configuration, ordinary edits, workflow decisions, Review, and explicitly Codex-routed implementation stay with Codex.
 
 ## Architecture
 
@@ -89,7 +89,7 @@ Use `opus` for material architecture, consistency, concurrency, security, migrat
 
 ## Runner behavior
 
-The packaged entry point exposes `init`, `run`, `resume`, `restart-segment-session`, `status`, `wait`, `approve-permission`, `extend`, `interrupt`, `terminate`, `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. `restart-segment-session` is restricted to backend-failed, inactive Work Units and preserves the abandoned Session record. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
+The packaged entry point exposes `init`, `run`, `resume`, `restart-segment-session`, `status`, `wait`, `approve-permission`, `extend`, `interrupt`, `terminate`, optional evidence recording through `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. Runner evidence never gates native Review, repair, verification, or completion. `restart-segment-session` is restricted to backend-failed, inactive Work Units and preserves the abandoned Session record. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
 
 Claude runs non-interactively with `stream-json`. The Runner appends a local progress MCP server without strict MCP replacement, so user-configured tools such as CodeGraph remain available. Unknown tool events are stored exactly and remain opaque.
 
