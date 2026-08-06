@@ -36,20 +36,52 @@ class StateStore:
 
     @contextmanager
     def _exclusive_lock(self, timeout: float = 10.0) -> Iterator[None]:
+        if os.name == "nt":
+            with self._windows_lock(timeout):
+                yield
+            return
+        import fcntl
+
+        descriptor = os.open(self.state_dir, os.O_RDONLY)
         deadline = time.monotonic() + timeout
-        descriptor: int | None = None
-        while descriptor is None:
+        while True:
             try:
-                descriptor = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.write(descriptor, f"{os.getpid()}\n".encode())
-                os.fsync(descriptor)
-            except FileExistsError:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"timed out acquiring {self.lock_path}")
+                    os.close(descriptor)
+                    raise TimeoutError(f"timed out locking {self.state_dir}")
+                time.sleep(0.01)
+        try:
+            try:
+                self.lock_path.unlink()
+            except FileNotFoundError:
+                pass
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    @contextmanager
+    def _windows_lock(self, timeout: float) -> Iterator[None]:
+        import msvcrt
+
+        descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    os.close(descriptor)
+                    raise TimeoutError(f"timed out locking {self.lock_path}")
                 time.sleep(0.01)
         try:
             yield
         finally:
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
             os.close(descriptor)
             try:
                 self.lock_path.unlink()

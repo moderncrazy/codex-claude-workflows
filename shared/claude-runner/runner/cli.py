@@ -4,18 +4,25 @@ import argparse
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from .contracts import WorkUnitState, WorkUnitStatus, utc_now
+from .contracts import ContractError, WorkUnitState, WorkUnitStatus, utc_now
 from .permission_hooks import build_hook_settings, handle_permission_denied, handle_permission_request
 from .progress_mcp import serve_progress_mcp
 from .state_store import StateStore
-from .supervisor import ClaudeInvocation, Supervisor
+from .supervisor import (
+    INTERRUPT_CONTROL_SIGNAL,
+    TERMINATE_CONTROL_SIGNAL,
+    ActiveRunError,
+    ClaudeInvocation,
+    Supervisor,
+    active_lease_held,
+)
 
 
 class CliError(RuntimeError):
@@ -25,7 +32,7 @@ class CliError(RuntimeError):
 
 
 def _emit(payload: dict[str, object]) -> None:
-    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
 def _state_summary(store: StateStore, *, events: list[dict[str, object]] | None = None) -> dict[str, object]:
@@ -63,10 +70,20 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--tool-idle-seconds", type=float, default=1800)
     init.add_argument("--work-unit-seconds", type=float, default=14400)
     init.add_argument("--heartbeat-seconds", type=float, default=30)
+    init.add_argument("--termination-grace-seconds", type=float, default=15)
 
-    for name in ("run", "resume", "status", "wait", "interrupt", "terminate", "finish"):
+    for name in ("run", "resume"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", required=True, type=Path)
+        command.add_argument("--segment-id")
+    for name in ("status", "interrupt", "terminate", "finish"):
+        command = commands.add_parser(name)
+        command.add_argument("--state-dir", required=True, type=Path)
+    wait = commands.add_parser("wait")
+    wait.add_argument("--state-dir", required=True, type=Path)
+    wait.add_argument("--after-sequence", type=int, default=0)
+    wait.add_argument("--poll-seconds", type=float, default=0.25)
+    wait.add_argument("--max-wait-seconds", type=float)
 
     approve = commands.add_parser("approve-permission")
     approve.add_argument("--state-dir", required=True, type=Path)
@@ -179,6 +196,7 @@ def _init(args: argparse.Namespace) -> int:
                 "tool_idle_seconds": args.tool_idle_seconds,
                 "work_unit_seconds": args.work_unit_seconds,
                 "heartbeat_seconds": args.heartbeat_seconds,
+                "termination_grace_seconds": args.termination_grace_seconds,
             },
         }
     }
@@ -210,15 +228,48 @@ def _entrypoint() -> Path:
     return Path(__file__).parents[1] / "claude_runner.py"
 
 
+def _segment_verified(state: WorkUnitState, segment_id: str) -> bool:
+    return any(
+        item.get("segment_id") == segment_id and item.get("exit_code") == 0
+        for item in state.evidence["verified"]
+    )
+
+
 def _run(args: argparse.Namespace, *, resume: bool) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
-    segment = next((item for item in state.segments if item["status"] != "complete"), None)
+    if args.segment_id:
+        segment = next((item for item in state.segments if item["segment_id"] == args.segment_id), None)
+        if segment is None:
+            raise CliError("unknown_segment", args.segment_id)
+    else:
+        segment = next((item for item in state.segments if item["status"] != "complete"), None)
     if segment is None:
         raise CliError("no_pending_segment", "all segments are complete")
+    segment_index = next(index for index, item in enumerate(state.segments) if item["segment_id"] == segment["segment_id"])
+    if not resume and segment_index > 0:
+        predecessor = state.segments[segment_index - 1]
+        if predecessor["status"] != "complete" or not _segment_verified(state, predecessor["segment_id"]):
+            raise CliError(
+                "segment_verification_required",
+                f"verify {predecessor['segment_id']} before starting {segment['segment_id']}",
+            )
     if resume:
         if not segment["session_id"]:
             raise CliError("missing_session", "resume requires the recorded Segment Session ID")
+        if segment["status"] == "complete":
+            def reopen(current: WorkUnitState) -> None:
+                target = next(item for item in current.segments if item["segment_id"] == segment["segment_id"])
+                target["status"] = "running"
+                target["finished_at"] = None
+                current.evidence["verified"] = [
+                    item for item in current.evidence["verified"] if item.get("segment_id") != target["segment_id"]
+                ]
+                if current.status == "implementation_complete":
+                    current.transition_to(WorkUnitStatus.RUNNING)
+
+            state = store.update(reopen)
+            segment = next(item for item in state.segments if item["segment_id"] == segment["segment_id"])
     elif segment["session_id"] is None:
         session_id = str(uuid.uuid4())
 
@@ -243,7 +294,7 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
         working_root=Path(state.working_root),
         session_id=str(segment["session_id"]),
         resume=resume,
-        capability=state.executor["capability"],
+        capability=segment.get("capability", state.executor["capability"]),
         allowed_tools=tuple(
             state.permissions["initial"] + [approval["rule"] for approval in state.permissions["approved"]]
         ),
@@ -252,10 +303,12 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
         result_schema=Path(configuration["result_schema"]),
         prompt=f"{configuration['prompt']}\n\nExecution Segment scope: {segment['scope']}",
     )
-    events: list[dict[str, object]] = []
-    supervisor = Supervisor(store, invocation, event_sink=events.append, environment=os.environ, **configuration["thresholds"])
-    code = supervisor.run()
-    _emit(_state_summary(store, events=events))
+    supervisor = Supervisor(store, invocation, event_sink=_emit, environment=os.environ, **configuration["thresholds"])
+    try:
+        code = supervisor.run()
+    except ActiveRunError as exc:
+        raise CliError("work_unit_active", str(exc)) from exc
+    _emit(_state_summary(store))
     return code
 
 
@@ -283,9 +336,21 @@ def _record_verification(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
+        segment_id = args.segment_id
+        if segment_id is None:
+            candidates = [
+                segment["segment_id"]
+                for segment in state.segments
+                if segment["status"] == "complete" and not _segment_verified(state, segment["segment_id"])
+            ]
+            if len(candidates) != 1:
+                raise CliError("segment_id_required", "specify the Segment receiving this verification")
+            segment_id = candidates[0]
+        if not any(segment["segment_id"] == segment_id and segment["status"] == "complete" for segment in state.segments):
+            raise CliError("segment_not_complete", "verification requires a completed Segment")
         state.evidence["verified"].append(
             {
-                "segment_id": args.segment_id,
+                "segment_id": segment_id,
                 "command": args.verification_command,
                 "exit_code": args.exit_code,
                 "evidence_ref": args.evidence_ref,
@@ -304,7 +369,7 @@ def _finish(args: argparse.Namespace) -> int:
     def mutate(state: WorkUnitState) -> None:
         if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all Execution Segments must be complete")
-        if not state.evidence["verified"] or any(item["exit_code"] != 0 for item in state.evidence["verified"]):
+        if any(not _segment_verified(state, segment["segment_id"]) for segment in state.segments):
             raise CliError("verification_required", "Codex must record successful verification before handoff")
         state.runtime["implementation_handoff_at"] = utc_now()
 
@@ -327,7 +392,8 @@ def _cleanup(args: argparse.Namespace) -> int:
     expected = root / ".tmp" / "codex-claude-workflows" / state.work_unit_id
     if supplied.resolve() != expected or supplied.name != state.work_unit_id:
         raise CliError("unsafe_cleanup_target", "state directory is outside the owned Work Unit path")
-    if state.runtime.get("pid"):
+    active = state.runtime.get("active_run")
+    if isinstance(active, dict) and active_lease_held(store.state_dir):
         raise CliError("active_process", "cannot clean an active Work Unit")
     state.transition_to(WorkUnitStatus.CLEANED)
     store._write_atomic(state)
@@ -355,6 +421,8 @@ def _add_repair(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
+        if any(segment["status"] != "complete" or not _segment_verified(state, segment["segment_id"]) for segment in state.segments):
+            raise CliError("verification_required", "all existing Segments require verified evidence before a Repair Segment")
         if state.status == "implementation_complete":
             state.transition_to(WorkUnitStatus.RUNNING)
         state.segments.append(
@@ -379,22 +447,53 @@ def _add_repair(args: argparse.Namespace) -> int:
     return 0
 
 
-def _control(args: argparse.Namespace, sig: signal.Signals) -> int:
+def _control(args: argparse.Namespace, action: str) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
-    pid = state.runtime.get("pid")
-    group = state.runtime.get("process_group_id")
-    if not isinstance(pid, int) or (os.name != "nt" and group != pid):
+    active = state.runtime.get("active_run")
+    if not isinstance(active, dict) or not active_lease_held(store.state_dir):
+        def fail(current: WorkUnitState) -> None:
+            if current.status in {"running", "timeout_suspected", "interrupted"}:
+                if current.status == "timeout_suspected":
+                    current.transition_to(WorkUnitStatus.RUNNING)
+                current.transition_to(WorkUnitStatus.BACKEND_FAILURE)
+            current.runtime["backend_failure"] = {
+                "message": "unsafe or stale Runner process identity",
+                "recorded_at": utc_now(),
+            }
+
+        store.update(fail)
         raise CliError("unsafe_process_identity", "no validated Runner-owned process identity")
+    controller_pid = active.get("controller_pid")
+    if not isinstance(controller_pid, int):
+        raise CliError("unsafe_process_identity", "active lease lacks its Runner controller PID")
+    control_signal = INTERRUPT_CONTROL_SIGNAL if action == "interrupt" else TERMINATE_CONTROL_SIGNAL
     try:
-        if os.name == "nt":
-            os.kill(pid, sig)
-        else:
-            os.killpg(group, sig)
+        os.kill(controller_pid, control_signal)
     except ProcessLookupError as exc:
-        raise CliError("stale_process_identity", str(exc)) from exc
-    _emit({"work_unit_id": state.work_unit_id, "status": state.status, "signal": sig.name})
+        raise CliError("control_failed", str(exc)) from exc
+    _emit({"work_unit_id": state.work_unit_id, "status": state.status, "control": action})
     return 0
+
+
+def _wait(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+    after = args.after_sequence
+    started = time.monotonic()
+    terminal = {"permission_required", "backend_failure", "implementation_complete", "interrupted", "cleaned"}
+    while True:
+        state = store.load()
+        for event in state.runtime.get("runner_events", []):
+            if int(event.get("sequence", 0)) > after:
+                _emit(event)
+                after = int(event["sequence"])
+        if state.status in terminal:
+            _emit(_state_summary(store))
+            return 0
+        if args.max_wait_seconds is not None and time.monotonic() - started >= args.max_wait_seconds:
+            _emit({"work_unit_id": state.work_unit_id, "status": state.status, "wait_timed_out": True})
+            return 3
+        time.sleep(args.poll_seconds)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -406,9 +505,11 @@ def main(argv: list[str] | None = None) -> int:
             return _run(args, resume=False)
         if args.command == "resume":
             return _run(args, resume=True)
-        if args.command in {"status", "wait"}:
+        if args.command == "status":
             _emit(_state_summary(StateStore(args.state_dir)))
             return 0
+        if args.command == "wait":
+            return _wait(args)
         if args.command == "approve-permission":
             return _approve(args)
         if args.command == "extend":
@@ -422,9 +523,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "cleanup":
             return _cleanup(args)
         if args.command == "interrupt":
-            return _control(args, signal.SIGINT)
+            return _control(args, "interrupt")
         if args.command == "terminate":
-            return _control(args, signal.SIGTERM)
+            return _control(args, "terminate")
         if args.command == "report-progress":
             return serve_progress_mcp(args.state_dir)
         if args.event == "permission-request":
@@ -432,4 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         return handle_permission_denied(args.state_dir)
     except CliError as exc:
         _emit({"error": exc.code, "message": str(exc)})
+        return 2
+    except (ContractError, json.JSONDecodeError, OSError, TimeoutError) as exc:
+        _emit({"error": "invalid_or_unavailable_state", "message": str(exc)})
         return 2

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -25,6 +26,8 @@ def emit(payload: object) -> bytes:
 
 def main() -> int:
     scenario = os.environ.get("FAKE_CLAUDE_SCENARIO", "success")
+    if scenario == "ignore-term":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     session_id = option("--session-id") or option("--resume") or "missing"
     if scenario == "wrong-session":
         session_id = "00000000-0000-4000-8000-000000000000"
@@ -69,17 +72,23 @@ def main() -> int:
         }
         subprocess.run(shlex.split(command), input=json.dumps(request).encode(), stdout=subprocess.PIPE, check=False)
         return 3
+    elif scenario == "ignore-term":
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
+        time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
 
     emit(
         {
             "type": "result",
             "session_id": session_id,
             "structured_output": {
-                "status": "DONE",
+                "status": "DONE" if scenario != "invalid-result" else "INVENTED",
                 "summary": "fixture complete",
-                "files_changed": [],
-                "tests": [],
-                "commit": None,
+                "session_id": session_id,
+                "commits": [],
+                "tests": [{"command": "fixture-test", "status": "passed", "summary": "passed"}],
+                "concerns": [],
+                "context_requests": [],
+                "permission_requests": [],
             },
         }
     )

@@ -11,7 +11,7 @@ from pathlib import Path
 RUNNER_ROOT = Path(__file__).parents[1] / "shared" / "claude-runner"
 sys.path.insert(0, str(RUNNER_ROOT))
 
-from runner.contracts import InvalidTransition, WorkUnitState  # noqa: E402
+from runner.contracts import ContractError, InvalidTransition, WorkUnitState  # noqa: E402
 from runner.state_store import StateStore  # noqa: E402
 
 
@@ -117,6 +117,27 @@ class StateStoreTests(unittest.TestCase):
             serialized = json.loads((store.state_dir / "work-unit.json").read_text())
             sequences = [receipt["sequence"] for receipt in serialized["progress_claims"]]
             self.assertEqual(sequences, list(range(1, 13)))
+
+    def test_stale_lock_file_does_not_block_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore.create(sample_work_unit(Path(directory)))
+            store.lock_path.write_text("dead-owner\n", encoding="utf-8")
+
+            state = store.update_fields({"native_ref": "recovered"})
+
+            self.assertEqual(state.native_ref, "recovered")
+
+    def test_nested_contract_errors_are_reported_as_contract_errors(self) -> None:
+        state = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        state["executor"] = "not-an-object"
+
+        with self.assertRaises(ContractError):
+            WorkUnitState.from_dict(state)
+
+        state = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        state["segments"][0]["invented"] = True
+        with self.assertRaises(ContractError):
+            WorkUnitState.from_dict(state)
 
 
 if __name__ == "__main__":

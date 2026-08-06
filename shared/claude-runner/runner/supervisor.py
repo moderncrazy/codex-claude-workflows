@@ -6,13 +6,55 @@ import selectors
 import signal
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Mapping, Sequence
 
-from .contracts import WorkUnitStatus, utc_now
+from .contracts import ContractError, WorkUnitStatus, utc_now, validate_json_schema
 from .state_store import StateStore
 from .stream_capture import StreamObservation, StreamProtocolError
+
+
+class ActiveRunError(RuntimeError):
+    pass
+
+
+def capture_process_identity(pid: int) -> dict[str, object]:
+    identity: dict[str, object] = {"pid": pid}
+    if os.name != "nt":
+        identity["process_group_id"] = os.getpgid(pid)
+    return identity
+
+
+def active_lease_held(state_dir: Path) -> bool:
+    path = state_dir / StateStore.RAW_FILES["stdout"]
+    descriptor = os.open(path, os.O_RDWR)
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            os.close(descriptor)
+            return True
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        os.close(descriptor)
+        return False
+    import fcntl
+
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return True
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    os.close(descriptor)
+    return False
+
+
+INTERRUPT_CONTROL_SIGNAL = getattr(signal, "SIGUSR1", signal.SIGINT)
+TERMINATE_CONTROL_SIGNAL = getattr(signal, "SIGUSR2", signal.SIGTERM)
 
 
 @dataclass(frozen=True)
@@ -64,6 +106,7 @@ class Supervisor:
         tool_idle_seconds: float = 1800,
         work_unit_seconds: float = 14400,
         heartbeat_seconds: float = 30,
+        termination_grace_seconds: float = 15,
     ):
         self.store = store
         self.invocation = invocation
@@ -73,20 +116,142 @@ class Supervisor:
         self.tool_idle_seconds = tool_idle_seconds
         self.work_unit_seconds = work_unit_seconds
         self.heartbeat_seconds = heartbeat_seconds
+        self.termination_grace_seconds = termination_grace_seconds
         self.process: subprocess.Popen[bytes] | None = None
+        self.launch_token = str(uuid.uuid4())
+        self.active_lease_descriptor: int | None = None
+        self.previous_signal_handlers: dict[signal.Signals, object] = {}
+        self.interrupt_requested = False
+        self.terminate_requested = False
+        self.control_applied: str | None = None
+        self.terminate_deadline: float | None = None
 
     def _emit(self, kind: str, **fields: object) -> None:
-        self.event_sink({"type": "runner_event", "kind": kind, **fields})
+        saved: dict[str, object] | None = None
+
+        def record(state: object) -> None:
+            nonlocal saved
+            sequence = int(state.runtime.get("runner_event_sequence", 0)) + 1
+            saved = {
+                "type": "runner_event",
+                "kind": kind,
+                "sequence": sequence,
+                "recorded_at": utc_now(),
+                **fields,
+            }
+            state.runtime["runner_event_sequence"] = sequence
+            state.runtime.setdefault("runner_events", []).append(saved)
+
+        self.store.update(record)
+        assert saved is not None
+        self.event_sink(saved)
+
+    def _reserve_launch(self) -> None:
+
+        def reserve(state: object) -> None:
+            active = state.runtime.get("active_run")
+            if isinstance(active, dict):
+                state.runtime.setdefault("stale_runs", []).append(active)
+            if state.status != "running":
+                state.transition_to(WorkUnitStatus.RUNNING)
+            state.runtime["active_run"] = {
+                "launch_token": self.launch_token,
+                "controller_pid": os.getpid(),
+                "identity": None,
+                "reserved_at": utc_now(),
+            }
+
+        self.store.update(reserve)
+
+    def _acquire_active_lease(self) -> None:
+        path = self.store.state_dir / StateStore.RAW_FILES["stdout"]
+        descriptor = os.open(path, os.O_RDWR)
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                os.close(descriptor)
+                raise ActiveRunError("this Work Unit already has a live Runner-owned process") from exc
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                os.close(descriptor)
+                raise ActiveRunError("this Work Unit already has a live Runner-owned process") from exc
+        self.active_lease_descriptor = descriptor
+
+    def _release_active_lease(self) -> None:
+        if self.active_lease_descriptor is None:
+            return
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(self.active_lease_descriptor, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(self.active_lease_descriptor, fcntl.LOCK_UN)
+        os.close(self.active_lease_descriptor)
+        self.active_lease_descriptor = None
+
+    def _install_control_handlers(self) -> None:
+        for control_signal, attribute in (
+            (INTERRUPT_CONTROL_SIGNAL, "interrupt_requested"),
+            (TERMINATE_CONTROL_SIGNAL, "terminate_requested"),
+        ):
+            self.previous_signal_handlers[control_signal] = signal.getsignal(control_signal)
+            signal.signal(control_signal, lambda _signum, _frame, name=attribute: setattr(self, name, True))
+
+    def _restore_control_handlers(self) -> None:
+        for control_signal, previous in self.previous_signal_handlers.items():
+            signal.signal(control_signal, previous)
+        self.previous_signal_handlers.clear()
+
+    def _apply_control_requests(self, now: float) -> None:
+        if self.interrupt_requested and self.control_applied is None:
+            self.control_applied = "interrupt"
+            self._record_control_request("interrupt")
+            self._signal(signal.SIGINT)
+        if self.terminate_requested and self.control_applied is None:
+            self.control_applied = "terminate"
+            self._record_control_request("terminate")
+            self._signal(signal.SIGTERM)
+            self.terminate_deadline = now + self.termination_grace_seconds
+        if (
+            self.control_applied == "terminate"
+            and self.terminate_deadline is not None
+            and now >= self.terminate_deadline
+            and self.process is not None
+            and self.process.poll() is None
+        ):
+            self._signal(signal.SIGKILL)
+            self.terminate_deadline = None
+
+    def _record_control_request(self, action: str) -> None:
+        def mutate(state: object) -> None:
+            state.runtime["control_requested"] = {"action": action, "requested_at": utc_now()}
+
+        self.store.update(mutate)
 
     def _set_running(self, process: subprocess.Popen[bytes]) -> None:
+        identity = capture_process_identity(process.pid)
+
         def mutate(state: object) -> None:
-            state.transition_to(WorkUnitStatus.RUNNING)
+            active = state.runtime.get("active_run")
+            if not isinstance(active, dict) or active.get("launch_token") != self.launch_token:
+                raise ActiveRunError("Runner launch lease changed before process start")
+            active["identity"] = identity
             state.runtime.update(
                 {
                     "pid": process.pid,
-                    "process_group_id": process.pid if os.name != "nt" else None,
+                    "process_group_id": identity.get("process_group_id"),
                     "process_started_at": utc_now(),
                     "last_raw_event_at": None,
+                    "last_invocation_capability": self.invocation.capability,
                 }
             )
             for segment in state.segments:
@@ -99,6 +264,16 @@ class Supervisor:
         self.store.update(mutate)
 
     def run(self) -> int:
+        self._acquire_active_lease()
+        self._install_control_handlers()
+        try:
+            return self._run_with_lease()
+        finally:
+            self._restore_control_handlers()
+            self._release_active_lease()
+
+    def _run_with_lease(self) -> int:
+        self._reserve_launch()
         try:
             process = subprocess.Popen(
                 self.invocation.argv(),
@@ -113,7 +288,17 @@ class Supervisor:
             self._backend_failure(f"failed to start Claude: {exc}")
             return 1
         self.process = process
-        self._set_running(process)
+        try:
+            self._set_running(process)
+        except (OSError, RuntimeError, ActiveRunError) as exc:
+            if os.name == "nt":
+                process.terminate()
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=5)
+            self.process = None
+            self._backend_failure(f"failed to establish Runner process identity: {exc}")
+            return 1
         started = last_event = time.monotonic()
         next_heartbeat = started + self.heartbeat_seconds
         observation = StreamObservation()
@@ -128,6 +313,7 @@ class Supervisor:
         while selector.get_map():
             ready = selector.select(timeout=0.02)
             now = time.monotonic()
+            self._apply_control_requests(now)
             if now >= next_heartbeat:
                 self._heartbeat(started, now)
                 next_heartbeat = now + self.heartbeat_seconds
@@ -177,6 +363,9 @@ class Supervisor:
         if stdout_buffer and protocol_error is None:
             protocol_error = "unterminated stream-json output"
         state = self.store.load()
+        if state.runtime.get("control_requested") is not None:
+            self._interrupted(return_code)
+            return return_code or 130
         if state.permissions["pending"] is not None:
             self._permission_required(return_code)
             return return_code or 3
@@ -191,6 +380,14 @@ class Supervisor:
             return return_code
         if observation.result is None:
             self._backend_failure("Claude stream ended without a structured final result")
+            return 1
+        try:
+            schema = json.loads(self.invocation.result_schema.read_text(encoding="utf-8"))
+            validate_json_schema(observation.result, schema)
+            if observation.result.get("session_id") != self.invocation.session_id:
+                raise ContractError("structured result Session ID did not match the invocation")
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            self._backend_failure(f"structured result validation failed: {exc}")
             return 1
         self._complete(observation.result)
         self._emit("process_exited", exit_code=return_code)
@@ -258,9 +455,25 @@ class Supervisor:
                 state.transition_to(WorkUnitStatus.RUNNING)
             state.transition_to(WorkUnitStatus.PERMISSION_REQUIRED)
             state.runtime["last_exit_code"] = return_code
+            state.runtime["pid"] = None
+            state.runtime["process_group_id"] = None
+            state.runtime["active_run"] = None
 
         self.store.update(mutate)
         self._emit("permission_required", exit_code=return_code)
+
+    def _interrupted(self, return_code: int) -> None:
+        def mutate(state: object) -> None:
+            if state.status == "timeout_suspected":
+                state.transition_to(WorkUnitStatus.RUNNING)
+            state.transition_to(WorkUnitStatus.INTERRUPTED)
+            state.runtime["last_exit_code"] = return_code
+            state.runtime["pid"] = None
+            state.runtime["process_group_id"] = None
+            state.runtime["active_run"] = None
+
+        self.store.update(mutate)
+        self._emit("interrupted", exit_code=return_code)
 
     def _backend_failure(self, message: str) -> None:
         def mutate(state: object) -> None:
@@ -268,6 +481,9 @@ class Supervisor:
                 state.transition_to(WorkUnitStatus.RUNNING)
             state.transition_to(WorkUnitStatus.BACKEND_FAILURE)
             state.runtime["backend_failure"] = {"message": message, "recorded_at": utc_now()}
+            state.runtime["pid"] = None
+            state.runtime["process_group_id"] = None
+            state.runtime["active_run"] = None
 
         self.store.update(mutate)
         self._emit("backend_failure", message=message)
@@ -278,6 +494,8 @@ class Supervisor:
                 state.transition_to(WorkUnitStatus.RUNNING)
             state.data["result"] = result
             state.runtime["pid"] = None
+            state.runtime["process_group_id"] = None
+            state.runtime["active_run"] = None
             for segment in state.segments:
                 if segment["session_id"] == self.invocation.session_id:
                     segment["status"] = "complete"

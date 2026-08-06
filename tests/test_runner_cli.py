@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -133,6 +134,26 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(result["status"], "implementation_complete")
             status = self.run_cli("status", "--state-dir", str(state_dir))
             self.assertEqual(status["result"]["summary"], "fixture complete")
+            waited = subprocess.run(
+                [
+                    sys.executable,
+                    str(ENTRYPOINT),
+                    "wait",
+                    "--state-dir",
+                    str(state_dir),
+                    "--after-sequence",
+                    "0",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(waited.returncode, 0, waited.stderr)
+            wait_lines = [json.loads(line) for line in waited.stdout.splitlines()]
+            self.assertTrue(any(line.get("kind") == "process_exited" for line in wait_lines))
+            self.assertEqual(wait_lines[-1]["status"], "implementation_complete")
             rejected = self.run_cli("cleanup", "--state-dir", str(state_dir), expected=2)
             self.assertEqual(rejected["error"], "native_completion_required")
             unfinished = self.run_cli("finish", "--state-dir", str(state_dir), expected=2)
@@ -181,6 +202,65 @@ class RunnerCliTests(unittest.TestCase):
             success_environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="success")
             resumed = self.run_cli("resume", "--state-dir", str(state_dir), environment=success_environment)
             self.assertEqual(resumed["status"], "implementation_complete")
+
+    def test_active_run_lease_rejects_duplicate_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "30d51f07-81f8-45c4-844c-b88a334d2186")
+            state_path = state_dir / "work-unit.json"
+            environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="model-idle", FAKE_CLAUDE_DELAY="0.8")
+            first = subprocess.Popen(
+                [sys.executable, str(ENTRYPOINT), "run", "--state-dir", str(state_dir)],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.addCleanup(lambda: first.poll() is None and first.kill())
+            for _ in range(100):
+                state = json.loads(state_path.read_text())
+                if state["runtime"].get("active_run", {}).get("controller_pid"):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("first Runner never established its active lease")
+
+            result = self.run_cli("run", "--state-dir", str(state_dir), expected=2)
+
+            self.assertEqual(result["error"], "work_unit_active")
+            stdout, stderr = first.communicate(timeout=5)
+            self.assertEqual(first.returncode, 0, stderr + stdout)
+
+    def test_interrupt_targets_the_active_runner_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "99f8fd70-dc3a-4c68-b12c-092a91b35dda")
+            state_path = state_dir / "work-unit.json"
+            environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="model-idle", FAKE_CLAUDE_DELAY="5")
+            running = subprocess.Popen(
+                [sys.executable, str(ENTRYPOINT), "run", "--state-dir", str(state_dir)],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.addCleanup(lambda: running.poll() is None and running.kill())
+            for _ in range(100):
+                state = json.loads(state_path.read_text())
+                if state["runtime"].get("active_run", {}).get("identity"):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("Runner never started its Claude process")
+
+            control = self.run_cli("interrupt", "--state-dir", str(state_dir))
+            self.assertEqual(control["control"], "interrupt")
+            stdout, stderr = running.communicate(timeout=5)
+
+            self.assertNotEqual(running.returncode, 0, stderr + stdout)
+            self.assertEqual(json.loads(state_path.read_text())["status"], "interrupted")
 
 
 if __name__ == "__main__":

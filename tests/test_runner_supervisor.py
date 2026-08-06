@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -83,7 +84,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertNotIn("do-not-surface", json.dumps(events))
 
     def test_invalid_json_and_wrong_session_become_backend_failure(self) -> None:
-        for scenario in ("invalid-json", "wrong-session"):
+        for scenario in ("invalid-json", "wrong-session", "invalid-result"):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
                 store, supervisor, _ = self.make_supervisor(Path(directory), scenario)
 
@@ -119,6 +120,26 @@ class SupervisorTests(unittest.TestCase):
 
             self.assertEqual(store.load().status, "permission_required")
             self.assertEqual(store.load().permissions["pending"]["tool_name"], "Bash")
+
+    def test_explicit_terminate_escalates_after_grace_without_pid_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, events = self.make_supervisor(
+                Path(directory), "ignore-term", termination_grace_seconds=0.05
+            )
+
+            def request_terminate(event: dict[str, object]) -> None:
+                events.append(event)
+                if event["kind"] == "tool_started":
+                    supervisor.terminate_requested = True
+
+            supervisor.event_sink = request_terminate
+
+            started = time.monotonic()
+            self.assertNotEqual(supervisor.run(), 0)
+
+            self.assertGreaterEqual(time.monotonic() - started, 0.04)
+            self.assertEqual(store.load().status, "interrupted")
+            self.assertTrue(any(event["kind"] == "interrupted" for event in events))
 
 
 if __name__ == "__main__":

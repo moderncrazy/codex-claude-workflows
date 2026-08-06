@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
@@ -72,6 +74,12 @@ TOP_LEVEL_FIELDS = {
     "result",
 }
 
+SEGMENT_FIELDS = {
+    "segment_id", "kind", "scope", "verification_commands", "status", "session_id",
+    "attempt", "created_at", "started_at", "finished_at", "finding_ids", "capability",
+}
+SEGMENT_REQUIRED = SEGMENT_FIELDS - {"finding_ids", "capability"}
+
 
 def utc_now() -> str:
     from datetime import datetime, timezone
@@ -103,7 +111,9 @@ class WorkUnitState:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "WorkUnitState":
-        data = dict(value)
+        if not isinstance(value, Mapping):
+            raise ContractError("adapter state must be an object")
+        data = copy.deepcopy(dict(value))
         unknown = set(data) - TOP_LEVEL_FIELDS
         missing = TOP_LEVEL_FIELDS - set(data)
         if unknown:
@@ -115,11 +125,41 @@ class WorkUnitState:
         if data["workflow"] not in {"superpowers", "matt"}:
             raise ContractError("workflow must be superpowers or matt")
         executor = data["executor"]
+        if not isinstance(executor, dict) or set(executor) != {"agent", "capability"}:
+            raise ContractError("executor must contain exactly agent and capability")
         if executor.get("agent") != "claude-code" or executor.get("capability") not in {"sonnet", "opus"}:
             raise ContractError("executor must use claude-code with sonnet or opus capability")
         WorkUnitStatus(data["status"])
         if not isinstance(data["segments"], list) or not data["segments"]:
             raise ContractError("at least one segment is required")
+        identifiers: set[str] = set()
+        for segment in data["segments"]:
+            _validate_segment(segment)
+            if segment["segment_id"] in identifiers:
+                raise ContractError("segment_id values must be unique")
+            identifiers.add(segment["segment_id"])
+        permissions = data["permissions"]
+        if not isinstance(permissions, dict) or set(permissions) != {"initial", "approved", "pending"}:
+            raise ContractError("permissions must contain exactly initial, approved, and pending")
+        if not isinstance(permissions["initial"], list) or not isinstance(permissions["approved"], list):
+            raise ContractError("permission allowlists must be arrays")
+        if permissions["pending"] is not None and not isinstance(permissions["pending"], dict):
+            raise ContractError("pending permission must be an object or null")
+        if not isinstance(data["runtime"], dict):
+            raise ContractError("runtime must be an object")
+        if not isinstance(data["progress_claims"], list) or not isinstance(data["commits"], list):
+            raise ContractError("progress_claims and commits must be arrays")
+        evidence = data["evidence"]
+        if not isinstance(evidence, dict) or set(evidence) != {"declared", "verified"}:
+            raise ContractError("evidence must contain exactly declared and verified")
+        if not isinstance(evidence["declared"], list) or not isinstance(evidence["verified"], list):
+            raise ContractError("evidence fields must be arrays")
+        if data["result"] is not None and not isinstance(data["result"], dict):
+            raise ContractError("result must be an object or null")
+        try:
+            uuid.UUID(str(data["work_unit_id"]))
+        except ValueError as exc:
+            raise ContractError("work_unit_id must be a UUID") from exc
         return cls(data)
 
     def to_dict(self) -> dict[str, Any]:
@@ -139,3 +179,103 @@ class WorkUnitState:
         if target not in ALLOWED_TRANSITIONS[current]:
             raise InvalidTransition(f"cannot transition from {current.value} to {target.value}")
         self.data["status"] = target.value
+
+
+def _validate_segment(segment: object) -> None:
+    if not isinstance(segment, dict):
+        raise ContractError("each segment must be an object")
+    unknown = set(segment) - SEGMENT_FIELDS
+    missing = SEGMENT_REQUIRED - set(segment)
+    if unknown or missing:
+        raise ContractError(f"invalid segment fields; missing={sorted(missing)}, unknown={sorted(unknown)}")
+    if not all(isinstance(segment[field], str) and segment[field] for field in ("segment_id", "kind", "scope", "created_at")):
+        raise ContractError("segment identity, kind, scope, and created_at must be non-empty strings")
+    if not isinstance(segment["verification_commands"], list) or any(not isinstance(item, str) for item in segment["verification_commands"]):
+        raise ContractError("verification_commands must be an array of strings")
+    SegmentStatus(segment["status"])
+    if segment["session_id"] is not None:
+        try:
+            uuid.UUID(str(segment["session_id"]))
+        except ValueError as exc:
+            raise ContractError("segment session_id must be a UUID or null") from exc
+    if not isinstance(segment["attempt"], int) or isinstance(segment["attempt"], bool) or segment["attempt"] < 0:
+        raise ContractError("segment attempt must be a non-negative integer")
+    for field in ("started_at", "finished_at"):
+        if segment[field] is not None and not isinstance(segment[field], str):
+            raise ContractError(f"{field} must be a string or null")
+    if "finding_ids" in segment and (
+        not isinstance(segment["finding_ids"], list) or any(not isinstance(item, str) for item in segment["finding_ids"])
+    ):
+        raise ContractError("finding_ids must be an array of strings")
+    if "capability" in segment and segment["capability"] not in {"sonnet", "opus"}:
+        raise ContractError("segment capability must be sonnet or opus")
+
+
+def validate_json_schema(instance: object, schema: Mapping[str, Any], path: str = "$") -> None:
+    """Validate the JSON Schema subset used by the bundled result contract."""
+    if "const" in schema and instance != schema["const"]:
+        raise ContractError(f"{path} must equal {schema['const']!r}")
+    if "enum" in schema and instance not in schema["enum"]:
+        raise ContractError(f"{path} is not one of {schema['enum']!r}")
+    expected_type = schema.get("type")
+    if expected_type is not None and not _matches_type(instance, expected_type):
+        raise ContractError(f"{path} has the wrong JSON type")
+    if isinstance(instance, dict):
+        required = schema.get("required", [])
+        missing = [key for key in required if key not in instance]
+        if missing:
+            raise ContractError(f"{path} is missing required fields {missing}")
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            unknown = set(instance) - set(properties)
+            if unknown:
+                raise ContractError(f"{path} contains unknown fields {sorted(unknown)}")
+        for key, child_schema in properties.items():
+            if key in instance:
+                validate_json_schema(instance[key], child_schema, f"{path}.{key}")
+    if isinstance(instance, list):
+        if len(instance) < schema.get("minItems", 0):
+            raise ContractError(f"{path} has too few items")
+        if "maxItems" in schema and len(instance) > schema["maxItems"]:
+            raise ContractError(f"{path} has too many items")
+        if "items" in schema:
+            for index, item in enumerate(instance):
+                validate_json_schema(item, schema["items"], f"{path}[{index}]")
+        if "contains" in schema and not any(_schema_matches(item, schema["contains"]) for item in instance):
+            raise ContractError(f"{path} does not contain a matching item")
+    if isinstance(instance, str):
+        if len(instance) < schema.get("minLength", 0):
+            raise ContractError(f"{path} is too short")
+        if schema.get("format") == "uuid":
+            try:
+                uuid.UUID(instance)
+            except ValueError as exc:
+                raise ContractError(f"{path} must be a UUID") from exc
+    for subschema in schema.get("allOf", []):
+        validate_json_schema(instance, subschema, path)
+    if "if" in schema and _schema_matches(instance, schema["if"]):
+        validate_json_schema(instance, schema.get("then", {}), path)
+    if "not" in schema and _schema_matches(instance, schema["not"]):
+        raise ContractError(f"{path} matches a forbidden schema")
+
+
+def _schema_matches(instance: object, schema: Mapping[str, Any]) -> bool:
+    try:
+        validate_json_schema(instance, schema)
+        return True
+    except ContractError:
+        return False
+
+
+def _matches_type(instance: object, expected: str | list[str]) -> bool:
+    names = [expected] if isinstance(expected, str) else expected
+    checks = {
+        "object": lambda value: isinstance(value, dict),
+        "array": lambda value: isinstance(value, list),
+        "string": lambda value: isinstance(value, str),
+        "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+        "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+        "boolean": lambda value: isinstance(value, bool),
+        "null": lambda value: value is None,
+    }
+    return any(checks[name](instance) for name in names)
