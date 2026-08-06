@@ -1,0 +1,427 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+from typing import Any
+
+from .contracts import WorkUnitState, WorkUnitStatus, utc_now
+from .permission_hooks import build_hook_settings, handle_permission_denied, handle_permission_request
+from .progress_mcp import serve_progress_mcp
+from .state_store import StateStore
+from .supervisor import ClaudeInvocation, Supervisor
+
+
+class CliError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _emit(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _state_summary(store: StateStore, *, events: list[dict[str, object]] | None = None) -> dict[str, object]:
+    state = store.load()
+    payload: dict[str, object] = {
+        "work_unit_id": state.work_unit_id,
+        "state_dir": str(store.state_dir),
+        "status": state.status,
+        "segments": state.segments,
+        "permissions": state.permissions,
+        "result": state.result,
+    }
+    if events is not None:
+        payload["runner_events"] = events
+    return payload
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(prog="claude_runner.py")
+    commands = root.add_subparsers(dest="command", required=True)
+
+    init = commands.add_parser("init")
+    init.add_argument("--working-root", required=True, type=Path)
+    init.add_argument("--workflow", required=True, choices=["superpowers", "matt"])
+    init.add_argument("--native-ref", required=True)
+    init.add_argument("--fixed-point", required=True)
+    init.add_argument("--capability", required=True, choices=["sonnet", "opus"])
+    init.add_argument("--result-schema", required=True, type=Path)
+    init.add_argument("--claude-executable", default="claude", type=Path)
+    init.add_argument("--prompt", required=True)
+    init.add_argument("--allowed-tool", action="append", default=[])
+    init.add_argument("--segments-json", required=True)
+    init.add_argument("--work-unit-id")
+    init.add_argument("--model-idle-seconds", type=float, default=600)
+    init.add_argument("--tool-idle-seconds", type=float, default=1800)
+    init.add_argument("--work-unit-seconds", type=float, default=14400)
+
+    for name in ("run", "resume", "status", "wait", "interrupt", "terminate", "finish"):
+        command = commands.add_parser(name)
+        command.add_argument("--state-dir", required=True, type=Path)
+
+    approve = commands.add_parser("approve-permission")
+    approve.add_argument("--state-dir", required=True, type=Path)
+    approve.add_argument("--expected-tool-name", required=True)
+    approve.add_argument("--allow-rule", required=True)
+
+    extend = commands.add_parser("extend")
+    extend.add_argument("--state-dir", required=True, type=Path)
+    extend.add_argument("--clock", required=True, choices=["model", "tool", "work_unit"])
+    extend.add_argument("--seconds", required=True, type=float)
+
+    verify = commands.add_parser("record-verification")
+    verify.add_argument("--state-dir", required=True, type=Path)
+    verify.add_argument("--command", dest="verification_command", required=True)
+    verify.add_argument("--exit-code", required=True, type=int)
+    verify.add_argument("--evidence-ref", required=True)
+    verify.add_argument("--segment-id")
+
+    repair = commands.add_parser("add-repair-segment")
+    repair.add_argument("--state-dir", required=True, type=Path)
+    repair.add_argument("--scope", required=True)
+    repair.add_argument("--finding-id", action="append", required=True)
+    repair.add_argument("--verification-command", action="append", default=[])
+    repair.add_argument("--capability", choices=["sonnet", "opus"])
+
+    cleanup = commands.add_parser("cleanup")
+    cleanup.add_argument("--state-dir", required=True, type=Path)
+    cleanup.add_argument("--native-workflow-complete", action="store_true")
+
+    hook = commands.add_parser("hook")
+    hook.add_argument("event", choices=["permission-request", "permission-denied"])
+    hook.add_argument("--state-dir", required=True, type=Path)
+    reporter = commands.add_parser("report-progress")
+    reporter.add_argument("--state-dir", required=True, type=Path)
+    return root
+
+
+def _validated_root(root: Path) -> Path:
+    root = root.resolve()
+    completed = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode != 0 or Path(completed.stdout.strip()).resolve() != root:
+        raise CliError("invalid_working_root", "working root must be the repository root")
+    ignored = subprocess.run(
+        ["git", "-C", str(root), "check-ignore", "-q", ".tmp/codex-claude-workflows/probe"],
+        check=False,
+    )
+    if ignored.returncode != 0:
+        raise CliError("tmp_not_ignored", "add /.tmp/ to .gitignore before fixing the implementation baseline")
+    return root
+
+
+def _segments(value: str) -> list[dict[str, object]]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise CliError("invalid_segments", str(exc)) from exc
+    if not isinstance(parsed, list) or not parsed:
+        raise CliError("invalid_segments", "segments-json must be a non-empty JSON array")
+    now = utc_now()
+    result = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            raise CliError("invalid_segments", "each segment must be an object")
+        result.append(
+            {
+                "segment_id": str(item["segment_id"]),
+                "kind": str(item["kind"]),
+                "scope": str(item["scope"]),
+                "verification_commands": list(item.get("verification_commands", [])),
+                "status": "pending",
+                "session_id": None,
+                "attempt": 0,
+                "created_at": now,
+                "started_at": None,
+                "finished_at": None,
+            }
+        )
+    return result
+
+
+def _init(args: argparse.Namespace) -> int:
+    root = _validated_root(args.working_root)
+    result_schema = args.result_schema.resolve()
+    if not result_schema.is_file():
+        raise CliError("missing_result_schema", str(result_schema))
+    work_unit_id = args.work_unit_id or str(uuid.uuid4())
+    try:
+        uuid.UUID(work_unit_id)
+    except ValueError as exc:
+        raise CliError("invalid_work_unit_id", work_unit_id) from exc
+    runtime = {
+        "configuration": {
+            "claude_executable": str(args.claude_executable.resolve()),
+            "result_schema": str(result_schema),
+            "prompt": args.prompt,
+            "thresholds": {
+                "model_idle_seconds": args.model_idle_seconds,
+                "tool_idle_seconds": args.tool_idle_seconds,
+                "work_unit_seconds": args.work_unit_seconds,
+            },
+        }
+    }
+    state = WorkUnitState.from_dict(
+        {
+            "schema_version": 1,
+            "work_unit_id": work_unit_id,
+            "workflow": args.workflow,
+            "native_ref": args.native_ref,
+            "working_root": str(root),
+            "fixed_point": args.fixed_point,
+            "executor": {"agent": "claude-code", "capability": args.capability},
+            "status": "initialized",
+            "segments": _segments(args.segments_json),
+            "permissions": {"initial": list(args.allowed_tool), "approved": [], "pending": None},
+            "runtime": runtime,
+            "progress_claims": [],
+            "evidence": {"declared": [], "verified": []},
+            "commits": [],
+            "result": None,
+        }
+    )
+    store = StateStore.create(state)
+    _emit(_state_summary(store))
+    return 0
+
+
+def _entrypoint() -> Path:
+    return Path(__file__).parents[1] / "claude_runner.py"
+
+
+def _run(args: argparse.Namespace, *, resume: bool) -> int:
+    store = StateStore(args.state_dir)
+    state = store.load()
+    segment = next((item for item in state.segments if item["status"] != "complete"), None)
+    if segment is None:
+        raise CliError("no_pending_segment", "all segments are complete")
+    if resume:
+        if not segment["session_id"]:
+            raise CliError("missing_session", "resume requires the recorded Segment Session ID")
+    elif segment["session_id"] is None:
+        session_id = str(uuid.uuid4())
+
+        def assign(current: WorkUnitState) -> None:
+            target = next(item for item in current.segments if item["segment_id"] == segment["segment_id"])
+            target["session_id"] = session_id
+
+        state = store.update(assign)
+        segment = next(item for item in state.segments if item["segment_id"] == segment["segment_id"])
+    configuration = state.runtime["configuration"]
+    reporter = {
+        "mcpServers": {
+            "codex_claude_runner": {
+                "command": sys.executable,
+                "args": [str(_entrypoint()), "report-progress", "--state-dir", str(store.state_dir)],
+            }
+        }
+    }
+    settings = build_hook_settings(store.state_dir, Path(sys.executable), _entrypoint())
+    invocation = ClaudeInvocation(
+        executable=Path(configuration["claude_executable"]),
+        working_root=Path(state.working_root),
+        session_id=str(segment["session_id"]),
+        resume=resume,
+        capability=state.executor["capability"],
+        allowed_tools=tuple(
+            state.permissions["initial"] + [approval["rule"] for approval in state.permissions["approved"]]
+        ),
+        reporter_config_json=json.dumps(reporter, separators=(",", ":")),
+        hook_settings_json=json.dumps(settings, separators=(",", ":")),
+        result_schema=Path(configuration["result_schema"]),
+        prompt=f"{configuration['prompt']}\n\nExecution Segment scope: {segment['scope']}",
+    )
+    events: list[dict[str, object]] = []
+    supervisor = Supervisor(store, invocation, event_sink=events.append, environment=os.environ, **configuration["thresholds"])
+    code = supervisor.run()
+    _emit(_state_summary(store, events=events))
+    return code
+
+
+def _approve(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+
+    def mutate(state: WorkUnitState) -> None:
+        pending = state.permissions["pending"]
+        if pending is None:
+            raise CliError("no_pending_permission", "there is no permission request to approve")
+        if pending.get("tool_name") != args.expected_tool_name:
+            raise CliError("permission_mismatch", "pending tool does not match expected-tool-name")
+        state.permissions["approved"].append(
+            {"rule": args.allow_rule, "approved_at": utc_now(), "request": pending["request"]}
+        )
+        state.permissions["pending"] = None
+        state.transition_to(WorkUnitStatus.RUNNING)
+
+    store.update(mutate)
+    _emit(_state_summary(store))
+    return 0
+
+
+def _record_verification(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+
+    def mutate(state: WorkUnitState) -> None:
+        state.evidence["verified"].append(
+            {
+                "segment_id": args.segment_id,
+                "command": args.verification_command,
+                "exit_code": args.exit_code,
+                "evidence_ref": args.evidence_ref,
+                "verified_at": utc_now(),
+            }
+        )
+
+    store.update(mutate)
+    _emit(_state_summary(store))
+    return 0
+
+
+def _finish(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+
+    def mutate(state: WorkUnitState) -> None:
+        if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
+            raise CliError("segments_incomplete", "all Execution Segments must be complete")
+        if not state.evidence["verified"] or any(item["exit_code"] != 0 for item in state.evidence["verified"]):
+            raise CliError("verification_required", "Codex must record successful verification before handoff")
+        state.runtime["implementation_handoff_at"] = utc_now()
+
+    store.update(mutate)
+    _emit(_state_summary(store))
+    return 0
+
+
+def _cleanup(args: argparse.Namespace) -> int:
+    if not args.native_workflow_complete:
+        raise CliError("native_completion_required", "cleanup requires Codex's native workflow completion assertion")
+    supplied = args.state_dir.absolute()
+    if supplied.is_symlink():
+        raise CliError("unsafe_cleanup_target", "state directory must not be a symlink")
+    store = StateStore(supplied)
+    state = store.load()
+    if not state.runtime.get("implementation_handoff_at"):
+        raise CliError("finish_required", "finish must precede cleanup")
+    root = Path(state.working_root).resolve()
+    expected = root / ".tmp" / "codex-claude-workflows" / state.work_unit_id
+    if supplied.resolve() != expected or supplied.name != state.work_unit_id:
+        raise CliError("unsafe_cleanup_target", "state directory is outside the owned Work Unit path")
+    if state.runtime.get("pid"):
+        raise CliError("active_process", "cannot clean an active Work Unit")
+    state.transition_to(WorkUnitStatus.CLEANED)
+    store._write_atomic(state)
+    shutil.rmtree(supplied)
+    _emit({"work_unit_id": state.work_unit_id, "state_dir": str(supplied), "status": "cleaned"})
+    return 0
+
+
+def _extend(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+    key = f"{args.clock}_seconds" if args.clock != "work_unit" else "work_unit_seconds"
+
+    def mutate(state: WorkUnitState) -> None:
+        state.runtime["configuration"]["thresholds"][key] = args.seconds
+        state.runtime.setdefault("timeout_extensions", []).append({"clock": args.clock, "seconds": args.seconds, "at": utc_now()})
+        if state.status == "timeout_suspected":
+            state.transition_to(WorkUnitStatus.RUNNING)
+
+    store.update(mutate)
+    _emit(_state_summary(store))
+    return 0
+
+
+def _add_repair(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+
+    def mutate(state: WorkUnitState) -> None:
+        if state.status == "implementation_complete":
+            state.transition_to(WorkUnitStatus.RUNNING)
+        state.segments.append(
+            {
+                "segment_id": f"repair-{len(state.segments) + 1}",
+                "kind": "repair",
+                "scope": args.scope,
+                "finding_ids": list(args.finding_id),
+                "capability": args.capability or state.executor["capability"],
+                "verification_commands": list(args.verification_command),
+                "status": "pending",
+                "session_id": None,
+                "attempt": 0,
+                "created_at": utc_now(),
+                "started_at": None,
+                "finished_at": None,
+            }
+        )
+
+    store.update(mutate)
+    _emit(_state_summary(store))
+    return 0
+
+
+def _control(args: argparse.Namespace, sig: signal.Signals) -> int:
+    store = StateStore(args.state_dir)
+    state = store.load()
+    pid = state.runtime.get("pid")
+    group = state.runtime.get("process_group_id")
+    if not isinstance(pid, int) or (os.name != "nt" and group != pid):
+        raise CliError("unsafe_process_identity", "no validated Runner-owned process identity")
+    try:
+        if os.name == "nt":
+            os.kill(pid, sig)
+        else:
+            os.killpg(group, sig)
+    except ProcessLookupError as exc:
+        raise CliError("stale_process_identity", str(exc)) from exc
+    _emit({"work_unit_id": state.work_unit_id, "status": state.status, "signal": sig.name})
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        if args.command == "init":
+            return _init(args)
+        if args.command == "run":
+            return _run(args, resume=False)
+        if args.command == "resume":
+            return _run(args, resume=True)
+        if args.command in {"status", "wait"}:
+            _emit(_state_summary(StateStore(args.state_dir)))
+            return 0
+        if args.command == "approve-permission":
+            return _approve(args)
+        if args.command == "extend":
+            return _extend(args)
+        if args.command == "record-verification":
+            return _record_verification(args)
+        if args.command == "finish":
+            return _finish(args)
+        if args.command == "add-repair-segment":
+            return _add_repair(args)
+        if args.command == "cleanup":
+            return _cleanup(args)
+        if args.command == "interrupt":
+            return _control(args, signal.SIGINT)
+        if args.command == "terminate":
+            return _control(args, signal.SIGTERM)
+        if args.command == "report-progress":
+            return serve_progress_mcp(args.state_dir)
+        if args.event == "permission-request":
+            return handle_permission_request(args.state_dir)
+        return handle_permission_denied(args.state_dir)
+    except CliError as exc:
+        _emit({"error": exc.code, "message": str(exc)})
+        return 2
