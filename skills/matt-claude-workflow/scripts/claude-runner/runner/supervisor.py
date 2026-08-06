@@ -69,6 +69,7 @@ class ClaudeInvocation:
     hook_settings_json: str
     result_schema: Path
     prompt: str
+    continuation_context: str | None = None
 
     def argv(self) -> list[str]:
         mode = ["--resume", self.session_id] if self.resume else ["--session-id", self.session_id]
@@ -255,6 +256,19 @@ class Supervisor:
                     "last_invocation_capability": self.invocation.capability,
                 }
             )
+            if self.invocation.continuation_context is not None:
+                state.runtime.setdefault("continuation_inputs", []).append(
+                    {
+                        "segment_id": next(
+                            segment["segment_id"]
+                            for segment in state.segments
+                            if segment["session_id"] == self.invocation.session_id
+                        ),
+                        "session_id": self.invocation.session_id,
+                        "context": self.invocation.continuation_context,
+                        "supplied_at": utc_now(),
+                    }
+                )
             for segment in state.segments:
                 if segment["session_id"] == self.invocation.session_id:
                     segment["status"] = "running"

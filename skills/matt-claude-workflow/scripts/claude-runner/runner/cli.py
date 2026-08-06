@@ -240,6 +240,8 @@ def _segment_verified(state: WorkUnitState, segment_id: str) -> bool:
 def _run(args: argparse.Namespace, *, resume: bool) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    if resume and state.permissions["pending"] is not None:
+        raise CliError("pending_permission", "approve or deny the pending permission before resume")
     if args.segment_id:
         segment = next((item for item in state.segments if item["segment_id"] == args.segment_id), None)
         if segment is None:
@@ -281,18 +283,6 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
 
             state = store.update(reopen)
             segment = next(item for item in state.segments if item["segment_id"] == segment["segment_id"])
-        if continuation_context:
-            def record_context(current: WorkUnitState) -> None:
-                current.runtime.setdefault("continuation_inputs", []).append(
-                    {
-                        "segment_id": segment["segment_id"],
-                        "session_id": segment["session_id"],
-                        "context": continuation_context,
-                        "supplied_at": utc_now(),
-                    }
-                )
-
-            state = store.update(record_context)
     elif segment["session_id"] is None:
         session_id = str(uuid.uuid4())
 
@@ -324,6 +314,7 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
         reporter_config_json=json.dumps(reporter, separators=(",", ":")),
         hook_settings_json=json.dumps(settings, separators=(",", ":")),
         result_schema=Path(configuration["result_schema"]),
+        continuation_context=args.continuation_context if resume else None,
         prompt=(
             f"{configuration['prompt']}\n\nExecution Segment scope: {segment['scope']}"
             + (f"\n\nCodex continuation context:\n{args.continuation_context}" if resume and args.continuation_context else "")

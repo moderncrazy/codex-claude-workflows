@@ -215,6 +215,8 @@ class RunnerCliTests(unittest.TestCase):
                 expected=3,
             )
             self.assertEqual(stopped["permissions"]["pending"]["tool_name"], "Bash")
+            bypass = self.run_cli("resume", "--state-dir", str(state_dir), expected=2)
+            self.assertEqual(bypass["error"], "pending_permission")
 
             self.run_cli(
                 "approve-permission",
@@ -266,6 +268,58 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(resumed["segments"][0]["session_id"], session_id)
             state = json.loads((state_dir / "work-unit.json").read_text())
             self.assertEqual(state["runtime"]["continuation_inputs"][-1]["context"], "fixture answer")
+
+    def test_failed_concurrent_resume_does_not_record_undispatched_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "51dc1cc0-0343-412c-a1a4-7a2fb42fe34d")
+            self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="needs-context"),
+                expected=3,
+            )
+            state_path = state_dir / "work-unit.json"
+            running = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(ENTRYPOINT),
+                    "resume",
+                    "--state-dir",
+                    str(state_dir),
+                    "--continuation-context",
+                    "first",
+                ],
+                cwd=REPO_ROOT,
+                env=dict(os.environ, FAKE_CLAUDE_SCENARIO="model-idle", FAKE_CLAUDE_DELAY="0.8"),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.addCleanup(lambda: running.poll() is None and running.kill())
+            for _ in range(100):
+                state = json.loads(state_path.read_text())
+                active_run = state["runtime"].get("active_run")
+                if isinstance(active_run, dict) and active_run.get("identity"):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("first resume never started Claude")
+
+            rejected = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                "--continuation-context",
+                "second",
+                expected=2,
+            )
+            self.assertEqual(rejected["error"], "work_unit_active")
+            stdout, stderr = running.communicate(timeout=5)
+            self.assertEqual(running.returncode, 0, stderr + stdout)
+            contexts = json.loads(state_path.read_text())["runtime"]["continuation_inputs"]
+            self.assertEqual([item["context"] for item in contexts], ["first"])
 
     def test_active_run_lease_rejects_duplicate_launch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
