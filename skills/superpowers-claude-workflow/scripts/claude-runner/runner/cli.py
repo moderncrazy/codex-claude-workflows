@@ -387,6 +387,8 @@ def _record_verification(args: argparse.Namespace) -> int:
 
 def _finish(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
+    if active_lease_held(store.state_dir):
+        raise CliError("active_process", "cannot mark handoff while the Runner is active")
 
     def mutate(state: WorkUnitState) -> None:
         if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
@@ -441,6 +443,8 @@ def _extend(args: argparse.Namespace) -> int:
 
 def _add_repair(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
+    if active_lease_held(store.state_dir):
+        raise CliError("active_process", "cannot add a Repair Segment while the Runner is active")
 
     def mutate(state: WorkUnitState) -> None:
         if any(segment["status"] != "complete" for segment in state.segments):

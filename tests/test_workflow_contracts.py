@@ -299,7 +299,10 @@ class RunnerWorkflowBoundaryTests(unittest.TestCase):
     def test_standalone_docs_and_configuration_remain_with_codex(self):
         skill = (ROOT / "skills/superpowers-claude-workflow/SKILL.md").read_text().lower()
         self.assertIn("standalone documentation", skill)
-        self.assertIn("remain with codex", skill)
+        self.assertIn("configuration work remains with codex", skill)
+        self.assertIn("every change required inside a claude-routed coding task", skill)
+        self.assertIn("project dependency work remains governed by the approved native plan", skill)
+        self.assertNotIn("ordinary edits", skill)
         self.assertNotIn(
             "keep source, tests, documentation, and configuration with the selected implementer",
             skill,

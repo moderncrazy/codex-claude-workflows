@@ -193,6 +193,43 @@ class RunnerCliTests(unittest.TestCase):
             state = json.loads((state_dir / "work-unit.json").read_text())
             self.assertEqual(state["evidence"]["verified"][-1]["evidence_ref"], "native-verification.log")
 
+    @unittest.skipIf(os.name == "nt", "POSIX lease timing regression")
+    def test_handoff_and_repair_reject_an_active_runner_lease(self) -> None:
+        import fcntl
+
+        for action in ("finish", "repair"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = self.make_repo(directory)
+                state_dir = self.init_work_unit(
+                    root,
+                    f"38f59f50-0988-4ac8-af1f-e897109e9{1 if action == 'finish' else 2:03d}",
+                )
+                self.run_cli(
+                    "run",
+                    "--state-dir",
+                    str(state_dir),
+                    environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+                )
+                descriptor = os.open(state_dir / "raw-events.jsonl", os.O_RDWR)
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                try:
+                    arguments = [action, "--state-dir", str(state_dir)]
+                    if action == "repair":
+                        arguments = [
+                            "add-repair-segment",
+                            "--state-dir",
+                            str(state_dir),
+                            "--scope",
+                            "repair finding",
+                            "--finding-id",
+                            "F-1",
+                        ]
+                    rejected = self.run_cli(*arguments, expected=2)
+                    self.assertEqual(rejected["error"], "active_process")
+                finally:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    os.close(descriptor)
+
     def test_permission_can_be_narrowly_approved_then_resumed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)

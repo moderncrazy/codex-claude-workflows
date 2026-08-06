@@ -28,7 +28,7 @@ Before the Plan, read [executor-contract.md](references/executor-contract.md). B
 - `agent: codex`: use the native Codex implementer unchanged.
 - `agent: claude-code`: create one Runner Work Unit for the native Task, define Execution Segments immediately before dispatch, and run this Skill's `scripts/claude-runner/claude_runner.py`.
 - Keep native `.superpowers` artifacts authoritative. Runner state lives only under ignored `.tmp/codex-claude-workflows/<work-unit-id>/`.
-- Keep every change required inside a Claude-routed coding Task with Claude. Standalone documentation, planning, configuration, and ordinary edits remain with Codex. Never silently fall back to Codex for a Claude-routed coding Task.
+- Keep every change required inside a Claude-routed coding Task with Claude. Standalone documentation, planning, and configuration work remains with Codex. Never silently fall back to Codex for a Claude-routed coding Task.
 
 ## Review and fixes
 

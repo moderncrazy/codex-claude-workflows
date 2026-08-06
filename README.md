@@ -17,7 +17,7 @@ Direct use of the original Skills is unchanged. There is no Codex plugin, Sessio
 | Permission classification | Codex permission broker |
 | Review, verification, commits, completion | Native Codex workflow |
 
-Claude is the default coding implementer. Changes required inside a Claude-routed coding work unit stay with Claude; standalone documentation, planning, configuration, ordinary edits, workflow decisions, Review, and explicitly Codex-routed implementation stay with Codex.
+Claude is the default coding implementer. Changes required inside a Claude-routed coding work unit stay with Claude; standalone documentation, planning, and configuration work, workflow decisions, Review, and explicitly Codex-routed implementation stay with Codex.
 
 ## Architecture
 
