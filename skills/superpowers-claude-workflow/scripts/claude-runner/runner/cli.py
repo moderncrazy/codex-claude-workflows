@@ -111,6 +111,11 @@ def parser() -> argparse.ArgumentParser:
     repair.add_argument("--verification-command", action="append", default=[])
     repair.add_argument("--capability", choices=["sonnet", "opus"])
 
+    restart = commands.add_parser("restart-segment-session")
+    restart.add_argument("--state-dir", required=True, type=Path)
+    restart.add_argument("--segment-id", required=True)
+    restart.add_argument("--reason", required=True)
+
     cleanup = commands.add_parser("cleanup")
     cleanup.add_argument("--state-dir", required=True, type=Path)
     cleanup.add_argument("--native-workflow-complete", action="store_true")
@@ -469,6 +474,45 @@ def _add_repair(args: argparse.Namespace) -> int:
     return 0
 
 
+def _restart_segment_session(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+    state = store.load()
+    if state.status != "backend_failure":
+        raise CliError("backend_failure_required", "only a backend-failed Work Unit can restart a Session")
+    if active_lease_held(store.state_dir):
+        raise CliError("active_process", "cannot restart a Session while the Runner is active")
+
+    def mutate(current: WorkUnitState) -> None:
+        segment = next((item for item in current.segments if item["segment_id"] == args.segment_id), None)
+        if segment is None:
+            raise CliError("unknown_segment", args.segment_id)
+        if segment["status"] == "complete":
+            raise CliError("segment_complete", "cannot replace a completed Segment Session")
+        if segment["session_id"] is None:
+            raise CliError("missing_session", "the Segment has no failed Session to replace")
+        current.runtime.setdefault("abandoned_sessions", []).append(
+            {
+                "segment_id": segment["segment_id"],
+                "session_id": segment["session_id"],
+                "reason": args.reason,
+                "abandoned_at": utc_now(),
+            }
+        )
+        segment["session_id"] = None
+        segment["status"] = "pending"
+        segment["started_at"] = None
+        segment["finished_at"] = None
+        current.data["result"] = None
+        current.runtime["active_run"] = None
+        current.runtime["pid"] = None
+        current.runtime["process_group_id"] = None
+        current.runtime.pop("control_requested", None)
+
+    store.update(mutate)
+    _emit(_state_summary(store))
+    return 0
+
+
 def _control(args: argparse.Namespace, action: str) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
@@ -542,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
             return _finish(args)
         if args.command == "add-repair-segment":
             return _add_repair(args)
+        if args.command == "restart-segment-session":
+            return _restart_segment_session(args)
         if args.command == "cleanup":
             return _cleanup(args)
         if args.command == "interrupt":

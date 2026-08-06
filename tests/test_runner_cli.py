@@ -203,6 +203,42 @@ class RunnerCliTests(unittest.TestCase):
             resumed = self.run_cli("resume", "--state-dir", str(state_dir), environment=success_environment)
             self.assertEqual(resumed["status"], "implementation_complete")
 
+    def test_backend_failure_can_explicitly_restart_an_uncreated_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "04cf4893-d07a-4ac4-8c92-c06f60d47952")
+            failed = self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="missing-executable"),
+                expected=127,
+            )
+            failed_session = failed["segments"][0]["session_id"]
+            self.assertEqual(failed["status"], "backend_failure")
+
+            restarted = self.run_cli(
+                "restart-segment-session",
+                "--state-dir",
+                str(state_dir),
+                "--segment-id",
+                "segment-1",
+                "--reason",
+                "Claude rejected the session before creating it",
+            )
+            self.assertIsNone(restarted["segments"][0]["session_id"])
+            state = json.loads((state_dir / "work-unit.json").read_text())
+            self.assertEqual(state["runtime"]["abandoned_sessions"][-1]["session_id"], failed_session)
+
+            completed = self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+            self.assertEqual(completed["status"], "implementation_complete")
+            self.assertNotEqual(completed["segments"][0]["session_id"], failed_session)
+
     def test_structured_permission_can_be_approved_then_resumed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)

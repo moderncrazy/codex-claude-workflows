@@ -42,6 +42,6 @@ Validate Session and structured result, then independently inspect native report
 
 For one-Segment findings, resume that Session. For cross-Segment findings, add a Repair Segment. Preserve native rounds and capability escalation.
 
-Malformed streams, wrong Session, missing final result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve the Work Unit and report it to the user. Codex implementation requires an approved executor-contract change.
+Malformed streams, wrong Session, missing final result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve the Work Unit and report it to the user. When evidence proves Claude rejected a Session before creating it, use `restart-segment-session` with the exact Segment and reason, then `run`; the abandoned Session remains recorded. Codex implementation requires an approved executor-contract change.
 
 After native Final Review, verification-before-completion, and branch finishing, call `cleanup --native-workflow-complete`. Cleanup removes exactly the owned UUID directory.

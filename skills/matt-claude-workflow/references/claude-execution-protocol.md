@@ -42,6 +42,6 @@ Validate Session and structured result, then independently inspect diff, tests, 
 
 For an accepted finding owned by one Segment, resume that Session. For cross-Segment findings, add a Codex-defined Repair Segment. Native `code-review` and user control determine finding ownership and fixes.
 
-Malformed streams, wrong Session, missing result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve state and report it to the user; do not silently implement with Codex.
+Malformed streams, wrong Session, missing result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve state and report it to the user. When evidence proves Claude rejected a Session before creating it, use `restart-segment-session` with the exact Segment and reason, then `run`; the abandoned Session remains recorded. Do not silently implement with Codex.
 
 After accepted native Review, verification, commit evidence, and Tracker/implicit-task completion, call `cleanup --native-workflow-complete`. Cleanup removes exactly the owned UUID directory.

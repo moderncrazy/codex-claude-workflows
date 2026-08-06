@@ -89,7 +89,7 @@ Use `opus` for material architecture, consistency, concurrency, security, migrat
 
 ## Runner behavior
 
-The packaged entry point exposes `init`, `run`, `resume`, `status`, `wait`, `approve-permission`, `extend`, `interrupt`, `terminate`, `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
+The packaged entry point exposes `init`, `run`, `resume`, `restart-segment-session`, `status`, `wait`, `approve-permission`, `extend`, `interrupt`, `terminate`, `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. `restart-segment-session` is restricted to backend-failed, inactive Work Units and preserves the abandoned Session record. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
 
 Claude runs non-interactively with `stream-json`. The Runner appends a local progress MCP server without strict MCP replacement, so user-configured tools such as CodeGraph remain available. Unknown tool events are stored exactly and remain opaque.
 
