@@ -57,6 +57,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertNotIn("--resume", argv)
             self.assertEqual(argv.count("--allowedTools"), 2)
             self.assertIn("stream-json", argv)
+            self.assertIn("--verbose", argv)
             self.assertNotIn("--strict-mcp-config", argv)
             self.assertNotIn("--include-partial-messages", argv)
             self.assertNotIn("bypassPermissions", argv)

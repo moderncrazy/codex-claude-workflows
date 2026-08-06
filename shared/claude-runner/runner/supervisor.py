@@ -83,6 +83,7 @@ class ClaudeInvocation:
             "--permission-mode",
             "acceptEdits",
             *allowed,
+            "--verbose",
             "--output-format",
             "stream-json",
             "--mcp-config",
