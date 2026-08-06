@@ -71,6 +71,16 @@ class ClaudeInvocation:
     prompt: str
     continuation_context: str | None = None
 
+    def protocol_prompt(self) -> str:
+        return (
+            f"{self.prompt}\n\n"
+            "Claude Runner protocol:\n"
+            f"- Your exact Session ID is `{self.session_id}`. Copy it exactly into the structured result session_id.\n"
+            "- `mcp__codex_claude_runner__report_progress` is the required progress channel to Codex. "
+            "Call it at Segment start, before a long operation, after verification, and before the final structured result. "
+            "TaskUpdate is internal Claude state and does not reach Codex."
+        )
+
     def argv(self) -> list[str]:
         mode = ["--resume", self.session_id] if self.resume else ["--session-id", self.session_id]
         allowed = [argument for rule in self.allowed_tools for argument in ("--allowedTools", rule)]
@@ -92,7 +102,7 @@ class ClaudeInvocation:
             self.hook_settings_json,
             "--json-schema",
             self.result_schema.read_text(encoding="utf-8"),
-            self.prompt,
+            self.protocol_prompt(),
         ]
 
 

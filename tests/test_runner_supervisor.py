@@ -61,6 +61,9 @@ class SupervisorTests(unittest.TestCase):
             self.assertNotIn("--strict-mcp-config", argv)
             self.assertNotIn("--include-partial-messages", argv)
             self.assertNotIn("bypassPermissions", argv)
+            self.assertIn(SESSION_ID, argv[-1])
+            self.assertIn("mcp__codex_claude_runner__report_progress", argv[-1])
+            self.assertIn("required progress channel", argv[-1])
 
     def test_success_preserves_stdout_and_records_structured_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

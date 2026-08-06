@@ -66,6 +66,7 @@ class ProgressMcpTests(unittest.TestCase):
             client.notify("notifications/initialized")
             self.assertEqual(client.request("ping")["result"], {})
             tools = client.request("tools/list")["result"]["tools"]
+            self.assertEqual(PROGRESS_TOOL_NAME, "report_progress")
             self.assertEqual([tool["name"] for tool in tools], [PROGRESS_TOOL_NAME])
 
             claim = {
