@@ -90,7 +90,7 @@ class MattLifecycleTests(unittest.TestCase):
 
 
 class ClaudeExecutionProtocolTests(unittest.TestCase):
-    def test_noninteractive_runs_preapprove_only_exact_user_approved_commands(self):
+    def test_noninteractive_runs_preapprove_task_scoped_command_families(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
             protocol = (
                 ROOT
@@ -100,10 +100,30 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
                 / "claude-execution-protocol.md"
             ).read_text()
             self.assertIn("## Initial command permissions", protocol)
-            self.assertIn("exact commands already approved", protocol)
+            self.assertIn("task-scoped command-family", protocol)
+            self.assertIn("`Bash(.venv/bin/pytest *)`", protocol)
+            self.assertIn("version or help probes", protocol)
+            self.assertIn("`Bash(git status *)`", protocol)
+            self.assertIn("`Bash(git diff *)`", protocol)
             self.assertIn("`--allowedTools`", protocol)
             self.assertIn("`This command requires approval`", protocol)
             self.assertIn("return `PERMISSION_REQUIRED` immediately", protocol)
+
+    def test_broad_or_dangerous_command_families_remain_forbidden(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            protocol = (
+                ROOT
+                / "skills"
+                / skill
+                / "references"
+                / "claude-execution-protocol.md"
+            ).read_text()
+            self.assertIn("package installation", protocol)
+            self.assertIn("network commands", protocol)
+            self.assertIn("bare `Bash`", protocol)
+            self.assertIn("shell/interpreter wildcard", protocol)
+            self.assertIn("push", protocol)
+            self.assertIn("history rewriting", protocol)
 
 
 class SuperpowersStateTests(unittest.TestCase):

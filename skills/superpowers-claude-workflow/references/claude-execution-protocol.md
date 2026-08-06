@@ -17,7 +17,7 @@ claude -p
   --session-id <uuid>
   --model <sonnet|opus>
   --permission-mode acceptEdits
-  [--allowedTools <exact-approved-rule> ...]
+  [--allowedTools <task-scoped-command-family> ...]
   --output-format json
   --json-schema <schema-json>
   <task-prompt>
@@ -38,15 +38,23 @@ Do not pass provider-specific model IDs. Do not enable `--fallback-model` becaus
 
 ## Initial command permissions
 
-Before a new Session, derive the smallest `--allowedTools` list from exact commands already approved in the persisted Plan and route confirmation. A general approval to implement is not an exact command approval. Show the rules before launch when they were not already shown verbatim in the approved Plan.
+Treat approval of the Task executor contract as approval to run the named verification tools within that Task. Before a new Session, derive the smallest task-scoped command-family `--allowedTools` list from the focused tests, full suite, formatter, lint, and typecheck commands recorded in the persisted Plan. Do not require the user to approve harmless argument variations one at a time.
 
-Pre-approve only exact, task-scoped execution commands required by the acceptance criteria, such as the named focused test, full-suite, formatter, or typecheck command. When the native Task explicitly requires its implementer to create a local checkpoint commit, exact `git add <owned-files>` and `git commit -m <approved-message>` commands may also be approved. Never pre-approve package installation, network commands, push, merge, deployment, history rewriting, a shell/interpreter wildcard, bare `Bash`, or `Agent` as a way around permissions.
+Choose a stable action prefix, not the whole original command and not the whole executable. Examples:
 
-Pass every approved command as a narrow `--allowedTools` rule. If Claude receives `This command requires approval` for anything else, it must return `PERMISSION_REQUIRED` immediately with that exact command, scope, and reason. It must not retry command variants, spawn another Agent to run it, infer approval, or continue past required evidence.
+- `.venv/bin/pytest tests/unit/test_x.py -q` becomes `Bash(.venv/bin/pytest *)`, which also covers `.venv/bin/pytest --version`.
+- `python -m pytest tests/unit/test_x.py` becomes `Bash(python -m pytest *)`, never `Bash(python *)`.
+- `npm run lint` becomes `Bash(npm run lint *)`, never `Bash(npm *)`.
+- Add narrow version or help probes for the same authorized executable when the action-family rule does not already cover them.
+- Add `Bash(git status *)` and `Bash(git diff *)` for local read-only change inspection.
+
+When the native Task explicitly requires its implementer to create a local checkpoint commit, exact `git add <owned-files>` and `git commit -m <approved-message>` commands may also be approved. Never pre-approve package installation, network commands, push, merge, deployment, history rewriting, a shell/interpreter wildcard, bare `Bash`, or `Agent` as a way around permissions.
+
+Pass every derived family as a narrow `--allowedTools` rule. These rules reduce prompts; they do not expand the Task's file, behavior, or workflow scope. If Claude receives `This command requires approval` for anything outside these families, it must return `PERMISSION_REQUIRED` immediately with that exact command, scope, and reason. It must not retry command variants, spawn another Agent to run it, infer approval, or continue past required evidence.
 
 ## Resume
 
-For context, permission continuation, or fix rounds 1–3, use non-interactive `--resume <session-id>` and the same schema. Re-pass the already approved narrow `--allowedTools` rules and add only newly approved exact requests. Verify that the returned Session ID matches the intended task. Never use `--continue`, which can select the wrong task Session.
+For context, permission continuation, or fix rounds 1–3, use non-interactive `--resume <session-id>` and the same schema. Re-pass the derived command-family `--allowedTools` rules and add only newly approved requests. Verify that the returned Session ID matches the intended task. Never use `--continue`, which can select the wrong task Session.
 
 For fix rounds 4–5, generate a new UUID and provide the native task brief, prior report, Review findings, current diff/test state, and prior concerns. A new Session is an escalation, not a resume.
 
@@ -54,7 +62,7 @@ For fix rounds 4–5, generate a new UUID and provide the native task brief, pri
 
 Default to `--permission-mode acceptEdits`. Never use `bypassPermissions` or `--dangerously-skip-permissions`.
 
-If Claude needs another permission, it returns `PERMISSION_REQUIRED` with exact requests. Show the requested tool/command, scope, and reason to the user. On approval, resume the same Session with only the approved `--allowedTools` entries.
+If Claude needs a permission outside the automatic Task families, it returns `PERMISSION_REQUIRED` with exact requests. Show the requested tool/command, scope, and reason to the user. On approval, resume the same Session with only the approved additional `--allowedTools` entries.
 
 `--allowedTools` suppresses prompts for matching tools; it is not an availability boundary. When the task needs an explicit tool boundary, set `--tools` to the required built-ins and use `--disallowedTools` for explicit denials. Managed denials always win.
 

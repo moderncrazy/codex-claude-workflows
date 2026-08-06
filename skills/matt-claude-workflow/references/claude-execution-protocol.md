@@ -17,7 +17,7 @@ claude -p
   --session-id <uuid>
   --model <sonnet|opus>
   --permission-mode acceptEdits
-  [--allowedTools <exact-approved-rule> ...]
+  [--allowedTools <task-scoped-command-family> ...]
   --output-format json
   --json-schema <schema-json>
   <work-unit-prompt>
@@ -39,15 +39,23 @@ Do not use provider-specific model IDs or `--fallback-model`.
 
 ## Initial command permissions
 
-Before a new Session, derive the smallest `--allowedTools` list from exact commands already approved in the Ticket or implicit-task contract. A general approval to implement is not an exact command approval. Show the rules before launch when they were not already shown verbatim in the approved work unit.
+Treat approval of the Ticket or implicit-task executor contract as approval to run the named verification tools within that work unit. Before a new Session, derive the smallest task-scoped command-family `--allowedTools` list from the confirmed Red/Green tests, full suite, formatter, lint, and typecheck commands. Do not require the user to approve harmless argument variations one at a time.
 
-Pre-approve only exact, work-unit-scoped commands required by the confirmed seams and acceptance criteria, such as the named Red/Green test, full-suite, formatter, or typecheck command. When the lifecycle adapter explicitly requires the selected implementer to create a local review checkpoint, exact `git add <owned-files>` and `git commit -m <approved-message>` commands may also be approved. Never pre-approve package installation, network commands, push, merge, deployment, amend, rebase, reset, tag, a shell/interpreter wildcard, bare `Bash`, or `Agent` as a way around permissions.
+Choose a stable action prefix, not the whole original command and not the whole executable. Examples:
 
-Pass every approved command as a narrow `--allowedTools` rule. If Claude receives `This command requires approval` for anything else, it must return `PERMISSION_REQUIRED` immediately with that exact command, scope, and reason. It must not retry command variants, spawn another Agent to run it, infer approval, or continue past required evidence.
+- `.venv/bin/pytest tests/unit/test_x.py -q` becomes `Bash(.venv/bin/pytest *)`, which also covers `.venv/bin/pytest --version`.
+- `python -m pytest tests/unit/test_x.py` becomes `Bash(python -m pytest *)`, never `Bash(python *)`.
+- `npm run lint` becomes `Bash(npm run lint *)`, never `Bash(npm *)`.
+- Add narrow version or help probes for the same authorized executable when the action-family rule does not already cover them.
+- Add `Bash(git status *)` and `Bash(git diff *)` for local read-only change inspection.
+
+When the lifecycle adapter explicitly requires the selected implementer to create a local review checkpoint, exact `git add <owned-files>` and `git commit -m <approved-message>` commands may also be approved. Never pre-approve package installation, network commands, push, merge, deployment, amend, rebase, reset, tag, history rewriting, a shell/interpreter wildcard, bare `Bash`, or `Agent` as a way around permissions.
+
+Pass every derived family as a narrow `--allowedTools` rule. These rules reduce prompts; they do not expand the work unit's file, behavior, Ticket, or workflow scope. If Claude receives `This command requires approval` for anything outside these families, it must return `PERMISSION_REQUIRED` immediately with that exact command, scope, and reason. It must not retry command variants, spawn another Agent to run it, infer approval, or continue past required evidence.
 
 ## Resume
 
-Use non-interactive `--resume <session-id>` for missing context, approved permissions, or user-requested fixes to the same work unit. Re-pass the already approved narrow `--allowedTools` rules and add only newly approved exact requests. Verify the returned Session ID. Never use `--continue`, and never resume one Ticket's Session for another Ticket.
+Use non-interactive `--resume <session-id>` for missing context, approved permissions, or user-requested fixes to the same work unit. Re-pass the derived command-family `--allowedTools` rules and add only newly approved requests. Verify the returned Session ID. Never use `--continue`, and never resume one Ticket's Session for another Ticket.
 
 If the original Session cannot resume, report infrastructure failure. Do not create a replacement Claude Session for that work unit.
 
@@ -55,7 +63,7 @@ If the original Session cannot resume, report infrastructure failure. Do not cre
 
 Default to `--permission-mode acceptEdits`. Never use `bypassPermissions` or `--dangerously-skip-permissions`.
 
-When another permission is required, Claude returns `PERMISSION_REQUIRED` with exact requests. Show tool/command, scope, and reason to the user. If approved, resume the same Session with only the approved `--allowedTools` entries.
+When a permission outside the automatic work-unit families is required, Claude returns `PERMISSION_REQUIRED` with exact requests. Show tool/command, scope, and reason to the user. If approved, resume the same Session with only the approved additional `--allowedTools` entries.
 
 `--allowedTools` suppresses prompts; it does not limit availability. Use `--tools` and `--disallowedTools` for actual tool boundaries. Managed denials always win.
 

@@ -149,7 +149,10 @@ Claude's `DONE` result never replaces native independent Review.
 
 - Default to `acceptEdits`.
 - Never use `bypassPermissions` or `--dangerously-skip-permissions`.
-- Request additional tools with exact scope and reason.
+- Executor approval also approves task-scoped command families for the named test, formatter, lint, and typecheck actions. For example, an approved `.venv/bin/pytest ...` command becomes `Bash(.venv/bin/pytest *)`, so focused tests, the full suite, and `pytest --version` do not require separate prompts.
+- Pre-approve local `git status` and `git diff` inspection. Keep checkpoint `git add` and `git commit` authorization exact.
+- Request commands outside those families with exact scope and reason.
+- Never broadly allow a shell/interpreter, package installation, network access, push, deployment, or history rewriting.
 - Resume the same Session after user-approved permissions.
 - Respect managed denials.
 - Report CLI, authentication, quota, service, timeout, JSON/Schema, permission-protocol, native-artifact, and Session failures.
