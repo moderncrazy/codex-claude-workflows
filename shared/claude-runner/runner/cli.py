@@ -93,6 +93,12 @@ def parser() -> argparse.ArgumentParser:
     approve.add_argument("--expected-tool-name", required=True)
     approve.add_argument("--allow-rule", required=True)
 
+    for name in ("deny-permission", "dismiss-permission"):
+        resolution = commands.add_parser(name)
+        resolution.add_argument("--state-dir", required=True, type=Path)
+        resolution.add_argument("--expected-tool-name", required=True)
+        resolution.add_argument("--reason", required=True)
+
     extend = commands.add_parser("extend")
     extend.add_argument("--state-dir", required=True, type=Path)
     extend.add_argument("--clock", required=True, choices=["model", "tool", "work_unit"])
@@ -337,22 +343,78 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
     return code
 
 
-def _approve(args: argparse.Namespace) -> int:
-    store = StateStore(args.state_dir)
-
+def _resolve_permission(
+    store: StateStore,
+    *,
+    expected_tool_name: str,
+    resolution: str,
+    reason: str | None,
+    allow_rule: str | None,
+) -> None:
     def mutate(state: WorkUnitState) -> None:
         pending = state.permissions["pending"]
         if pending is None:
-            raise CliError("no_pending_permission", "there is no permission request to approve")
-        if pending.get("tool_name") != args.expected_tool_name:
+            raise CliError("no_pending_permission", "there is no permission request to resolve")
+        if pending.get("tool_name") != expected_tool_name:
             raise CliError("permission_mismatch", "pending tool does not match expected-tool-name")
-        state.permissions["approved"].append(
-            {"rule": args.allow_rule, "approved_at": utc_now(), "request": pending["request"]}
+        segment = next(
+            (item for item in state.segments if item["segment_id"] == pending["segment_id"]),
+            None,
+        )
+        if segment is None:
+            raise CliError("unknown_segment", str(pending["segment_id"]))
+        resolved_at = utc_now()
+        if resolution == "approved":
+            assert allow_rule is not None
+            state.permissions["approved"].append(
+                {"rule": allow_rule, "approved_at": resolved_at, "request": pending["request"]}
+            )
+        state.permissions["resolved"].append(
+            {
+                "resolution": resolution,
+                "reason": reason,
+                "rule": allow_rule,
+                "segment_id": segment["segment_id"],
+                "request": pending["request"],
+                "resolved_at": resolved_at,
+            }
         )
         state.permissions["pending"] = None
-        state.transition_to(WorkUnitStatus.RUNNING)
+        segment["status"] = "interrupted"
+        segment["finished_at"] = None
+        state.transition_to(WorkUnitStatus.INTERRUPTED)
 
-    store.update(mutate)
+    try:
+        with inactive_lease_guard(store.state_dir):
+            store.update(mutate)
+    except ActiveRunError as exc:
+        raise CliError("active_process", "cannot resolve permission while the Runner is active") from exc
+
+
+def _approve(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+    _resolve_permission(
+        store,
+        expected_tool_name=args.expected_tool_name,
+        resolution="approved",
+        reason=None,
+        allow_rule=args.allow_rule,
+    )
+
+    _emit(_state_summary(store))
+    return 0
+
+
+def _reject_permission(args: argparse.Namespace, resolution: str) -> int:
+    store = StateStore(args.state_dir)
+    _resolve_permission(
+        store,
+        expected_tool_name=args.expected_tool_name,
+        resolution=resolution,
+        reason=args.reason,
+        allow_rule=None,
+    )
+
     _emit(_state_summary(store))
     return 0
 
@@ -583,6 +645,10 @@ def main(argv: list[str] | None = None) -> int:
             return _wait(args)
         if args.command == "approve-permission":
             return _approve(args)
+        if args.command == "deny-permission":
+            return _reject_permission(args, "denied")
+        if args.command == "dismiss-permission":
+            return _reject_permission(args, "dismissed")
         if args.command == "extend":
             return _extend(args)
         if args.command == "record-verification":

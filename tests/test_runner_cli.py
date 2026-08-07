@@ -304,10 +304,102 @@ class RunnerCliTests(unittest.TestCase):
                 "--allow-rule",
                 "Bash(pytest --version)",
             )
-            self.assertEqual(approved["status"], "running")
+            self.assertEqual(approved["status"], "interrupted")
+            self.assertEqual(approved["segments"][0]["status"], "interrupted")
+            self.assertEqual(approved["permissions"]["resolved"][-1]["resolution"], "approved")
+            self.assertEqual(approved["permissions"]["resolved"][-1]["segment_id"], "segment-1")
             success_environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="success")
             resumed = self.run_cli("resume", "--state-dir", str(state_dir), environment=success_environment)
             self.assertEqual(resumed["status"], "implementation_complete")
+
+    def test_permission_can_be_denied_or_dismissed_then_same_session_resumed(self) -> None:
+        for index, (action, expected_resolution) in enumerate(
+            (("deny-permission", "denied"), ("dismiss-permission", "dismissed")),
+            start=1,
+        ):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = self.make_repo(directory)
+                state_dir = self.init_work_unit(
+                    root,
+                    f"3c2e38ee-aa89-463e-b48c-7f2169daa20{index}",
+                )
+                stopped = self.run_cli(
+                    "run",
+                    "--state-dir",
+                    str(state_dir),
+                    environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="permission"),
+                    expected=3,
+                )
+                session_id = stopped["segments"][0]["session_id"]
+
+                resolved = self.run_cli(
+                    action,
+                    "--state-dir",
+                    str(state_dir),
+                    "--expected-tool-name",
+                    "Bash",
+                    "--reason",
+                    "use the declared project command instead",
+                )
+
+                self.assertEqual(resolved["status"], "interrupted")
+                self.assertEqual(resolved["segments"][0]["status"], "interrupted")
+                self.assertIsNone(resolved["permissions"]["pending"])
+                audit = resolved["permissions"]["resolved"][-1]
+                self.assertEqual(audit["resolution"], expected_resolution)
+                self.assertEqual(audit["reason"], "use the declared project command instead")
+                self.assertEqual(audit["segment_id"], "segment-1")
+
+                resumed = self.run_cli(
+                    "resume",
+                    "--state-dir",
+                    str(state_dir),
+                    "--continuation-context",
+                    "Do not retry the rejected command; use the declared safe alternative.",
+                    environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+                )
+                self.assertEqual(resumed["segments"][0]["session_id"], session_id)
+                self.assertEqual(resumed["status"], "implementation_complete")
+
+    def test_permission_resolution_errors_leave_state_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "e739d07d-d590-4ef6-a2eb-a34df1c4e775")
+            no_pending = self.run_cli(
+                "deny-permission",
+                "--state-dir",
+                str(state_dir),
+                "--expected-tool-name",
+                "Bash",
+                "--reason",
+                "not required",
+                expected=2,
+            )
+            self.assertEqual(no_pending["error"], "no_pending_permission")
+
+            self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="permission"),
+                expected=3,
+            )
+            state_path = state_dir / "work-unit.json"
+            before = state_path.read_bytes()
+
+            mismatch = self.run_cli(
+                "dismiss-permission",
+                "--state-dir",
+                str(state_dir),
+                "--expected-tool-name",
+                "Read",
+                "--reason",
+                "wrong request",
+                expected=2,
+            )
+
+            self.assertEqual(mismatch["error"], "permission_mismatch")
+            self.assertEqual(state_path.read_bytes(), before)
 
     def test_backend_failure_can_explicitly_restart_an_uncreated_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
