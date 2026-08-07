@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -55,7 +56,8 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(argv[1], "-p")
             self.assertIn("--session-id", argv)
             self.assertNotIn("--resume", argv)
-            self.assertEqual(argv.count("--allowedTools"), 2)
+            self.assertEqual(argv.count("--allowedTools"), 3)
+            self.assertIn("mcp__codex_claude_runner__report_progress", argv)
             self.assertIn("stream-json", argv)
             self.assertIn("--verbose", argv)
             self.assertNotIn("--strict-mcp-config", argv)
@@ -78,6 +80,21 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(store.load().status, "implementation_complete")
             self.assertEqual(store.load().result["summary"], "fixture complete")
             self.assertTrue(any(event["kind"] == "process_exited" for event in events))
+
+    def test_progress_tool_authorization_is_not_duplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, supervisor, _ = self.make_supervisor(Path(directory), "success")
+            supervisor.invocation = replace(
+                supervisor.invocation,
+                allowed_tools=(
+                    *supervisor.invocation.allowed_tools,
+                    "mcp__codex_claude_runner__report_progress",
+                ),
+            )
+
+            argv = supervisor.invocation.argv()
+
+            self.assertEqual(argv.count("mcp__codex_claude_runner__report_progress"), 1)
 
     def test_unknown_tool_is_preserved_raw_but_not_surfaced_semantically(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
