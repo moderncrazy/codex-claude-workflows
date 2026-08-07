@@ -21,9 +21,16 @@ from tests.test_runner_state import sample_work_unit  # noqa: E402
 
 
 class PermissionHookTests(unittest.TestCase):
+    def running_store(self, root: Path) -> StateStore:
+        state = sample_work_unit(root)
+        state.transition_to("running")
+        state.segments[0]["status"] = "running"
+        state.segments[0]["session_id"] = "2b30da4c-4a0b-4d77-a5d9-75c785218daf"
+        return StateStore.create(state)
+
     def test_permission_request_is_recorded_verbatim_then_interrupts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store = StateStore.create(sample_work_unit(Path(directory)))
+            store = self.running_store(Path(directory))
             request = {
                 "session_id": "2b30da4c-4a0b-4d77-a5d9-75c785218daf",
                 "cwd": "/repo",
@@ -42,10 +49,11 @@ class PermissionHookTests(unittest.TestCase):
             pending = store.load().permissions["pending"]
             self.assertEqual(pending["request"], request)
             self.assertEqual(pending["tool_input"], {"query": "find callers"})
+            self.assertEqual(pending["segment_id"], "segment-1")
 
     def test_second_permission_cannot_overwrite_pending_request(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store = StateStore.create(sample_work_unit(Path(directory)))
+            store = self.running_store(Path(directory))
             first = {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "pytest"}}
             second = {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "git push"}}
             handle_permission_request(store.state_dir, io.StringIO(json.dumps(first)), io.StringIO())
@@ -81,6 +89,21 @@ class PermissionHookTests(unittest.TestCase):
             )
             self.assertNotEqual(handle_permission_request(store.state_dir, io.StringIO("nope"), malformed), 0)
             self.assertFalse(json.loads(malformed.getvalue())["continue"])
+
+    def test_permission_request_without_one_running_segment_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore.create(sample_work_unit(Path(directory)))
+            output = io.StringIO()
+
+            code = handle_permission_request(
+                store.state_dir,
+                io.StringIO(json.dumps({"hook_event_name": "PermissionRequest", "tool_name": "Bash"})),
+                output,
+            )
+
+            self.assertNotEqual(code, 0)
+            self.assertFalse(json.loads(output.getvalue())["continue"])
+            self.assertIsNone(store.load().permissions["pending"])
 
     def test_settings_are_inline_and_target_only_two_hooks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

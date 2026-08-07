@@ -170,6 +170,7 @@ def _segments(value: str) -> list[dict[str, object]]:
                 "status": "pending",
                 "session_id": None,
                 "attempt": 0,
+                "resume_count": 0,
                 "created_at": now,
                 "started_at": None,
                 "finished_at": None,
@@ -206,11 +207,12 @@ def _init(args: argparse.Namespace) -> int:
                 "heartbeat_seconds": args.heartbeat_seconds,
                 "termination_grace_seconds": args.termination_grace_seconds,
             },
-        }
+        },
+        "result_history": [],
     }
     state = WorkUnitState.from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "work_unit_id": work_unit_id,
             "workflow": args.workflow,
             "native_ref": args.native_ref,
@@ -219,7 +221,7 @@ def _init(args: argparse.Namespace) -> int:
             "executor": {"agent": "claude-code", "capability": args.capability},
             "status": "initialized",
             "segments": _segments(args.segments_json),
-            "permissions": {"initial": list(args.allowed_tool), "approved": [], "pending": None},
+            "permissions": {"initial": list(args.allowed_tool), "approved": [], "pending": None, "resolved": []},
             "runtime": runtime,
             "progress_claims": [],
             "evidence": {"declared": [], "verified": []},
@@ -438,9 +440,6 @@ def _extend(args: argparse.Namespace) -> int:
     def mutate(state: WorkUnitState) -> None:
         state.runtime["configuration"]["thresholds"][key] = args.seconds
         state.runtime.setdefault("timeout_extensions", []).append({"clock": args.clock, "seconds": args.seconds, "at": utc_now()})
-        if state.status == "timeout_suspected":
-            state.transition_to(WorkUnitStatus.RUNNING)
-
     store.update(mutate)
     _emit(_state_summary(store))
     return 0
@@ -466,6 +465,7 @@ def _add_repair(args: argparse.Namespace) -> int:
                 "status": "pending",
                 "session_id": None,
                 "attempt": 0,
+                "resume_count": 0,
                 "created_at": utc_now(),
                 "started_at": None,
                 "finished_at": None,
@@ -526,9 +526,7 @@ def _control(args: argparse.Namespace, action: str) -> int:
     active = state.runtime.get("active_run")
     if not isinstance(active, dict) or not active_lease_held(store.state_dir):
         def fail(current: WorkUnitState) -> None:
-            if current.status in {"running", "timeout_suspected", "interrupted"}:
-                if current.status == "timeout_suspected":
-                    current.transition_to(WorkUnitStatus.RUNNING)
+            if current.status in {"running", "interrupted"}:
                 current.transition_to(WorkUnitStatus.BACKEND_FAILURE)
             current.runtime["backend_failure"] = {
                 "message": "unsafe or stale Runner process identity",

@@ -79,6 +79,10 @@ class SupervisorTests(unittest.TestCase):
             self.assertIn(b'"structured_output"', raw)
             self.assertEqual(store.load().status, "implementation_complete")
             self.assertEqual(store.load().result["summary"], "fixture complete")
+            self.assertEqual(store.load().segments[0]["status"], "complete")
+            self.assertEqual(store.load().segments[0]["attempt"], 1)
+            self.assertEqual(store.load().segments[0]["resume_count"], 0)
+            self.assertEqual(store.load().runtime["result_history"][-1]["result"]["summary"], "fixture complete")
             self.assertTrue(any(event["kind"] == "process_exited" for event in events))
 
     def test_progress_tool_authorization_is_not_duplicated(self) -> None:
@@ -109,9 +113,17 @@ class SupervisorTests(unittest.TestCase):
         for scenario in ("invalid-json", "wrong-session", "invalid-result"):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
                 store, supervisor, _ = self.make_supervisor(Path(directory), scenario)
+                store.update(
+                    lambda state: state.data.__setitem__(
+                        "result", {"status": "DONE", "summary": "stale"}
+                    )
+                )
 
                 self.assertNotEqual(supervisor.run(), 0)
-                self.assertEqual(store.load().status, "backend_failure")
+                state = store.load()
+                self.assertEqual(state.status, "backend_failure")
+                self.assertIsNone(state.result)
+                self.assertEqual(state.segments[0]["status"], "failed")
 
     def test_stderr_is_preserved_as_exact_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -142,6 +154,7 @@ class SupervisorTests(unittest.TestCase):
 
             self.assertEqual(store.load().status, "permission_required")
             self.assertEqual(store.load().permissions["pending"]["tool_name"], "Bash")
+            self.assertEqual(store.load().segments[0]["status"], "permission_required")
 
     def test_supervisor_refuses_dispatch_while_permission_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +162,7 @@ class SupervisorTests(unittest.TestCase):
 
             def add_pending(state: object) -> None:
                 state.permissions["pending"] = {
+                    "segment_id": "segment-1",
                     "request": {"tool_name": "Bash"},
                     "tool_name": "Bash",
                     "tool_input": {"command": "pytest --version"},
@@ -174,7 +188,10 @@ class SupervisorTests(unittest.TestCase):
 
                 state = store.load()
                 self.assertEqual(state.status, expected_status)
-                self.assertNotEqual(state.segments[0]["status"], "complete")
+                self.assertEqual(
+                    state.segments[0]["status"],
+                    "permission_required" if expected_status == "permission_required" else "interrupted",
+                )
                 self.assertEqual(state.result["status"], {
                     "needs-context": "NEEDS_CONTEXT",
                     "blocked": "BLOCKED",
@@ -198,6 +215,7 @@ class SupervisorTests(unittest.TestCase):
 
             self.assertNotEqual(supervisor.run(), 0)
             self.assertEqual(store.load().status, "interrupted")
+            self.assertEqual(store.load().segments[0]["status"], "interrupted")
 
     def test_explicit_terminate_escalates_after_grace_without_pid_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -217,6 +235,7 @@ class SupervisorTests(unittest.TestCase):
 
             self.assertGreaterEqual(time.monotonic() - started, 0.04)
             self.assertEqual(store.load().status, "interrupted")
+            self.assertEqual(store.load().segments[0]["status"], "interrupted")
             self.assertTrue(any(event["kind"] == "interrupted" for event in events))
 
 

@@ -344,6 +344,8 @@ class RunnerCliTests(unittest.TestCase):
             )
             self.assertEqual(completed["status"], "implementation_complete")
             self.assertNotEqual(completed["segments"][0]["session_id"], failed_session)
+            self.assertEqual(completed["segments"][0]["attempt"], 2)
+            self.assertEqual(completed["segments"][0]["resume_count"], 0)
 
     def test_structured_permission_can_be_approved_then_resumed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -410,6 +412,8 @@ class RunnerCliTests(unittest.TestCase):
             )
             self.assertEqual(resumed["status"], "implementation_complete")
             self.assertEqual(resumed["segments"][0]["session_id"], session_id)
+            self.assertEqual(resumed["segments"][0]["attempt"], 1)
+            self.assertEqual(resumed["segments"][0]["resume_count"], 1)
             state = json.loads((state_dir / "work-unit.json").read_text())
             self.assertEqual(state["runtime"]["continuation_inputs"][-1]["context"], "fixture answer")
 

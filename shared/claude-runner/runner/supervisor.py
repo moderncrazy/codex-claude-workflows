@@ -187,6 +187,7 @@ class Supervisor:
             if state.status != "running":
                 state.transition_to(WorkUnitStatus.RUNNING)
             state.runtime.pop("control_requested", None)
+            state.data["result"] = None
             state.runtime["active_run"] = {
                 "launch_token": self.launch_token,
                 "controller_pid": os.getpid(),
@@ -303,8 +304,12 @@ class Supervisor:
             for segment in state.segments:
                 if segment["session_id"] == self.invocation.session_id:
                     segment["status"] = "running"
-                    segment["attempt"] += 1
+                    if self.invocation.resume:
+                        segment["resume_count"] += 1
+                    else:
+                        segment["attempt"] += 1
                     segment["started_at"] = segment["started_at"] or utc_now()
+                    segment["finished_at"] = None
                     break
 
         self.store.update(mutate)
@@ -398,7 +403,6 @@ class Supervisor:
                         protocol_error = str(exc)
                     if timeout_keys:
                         timeout_keys.clear()
-                        self._restore_running_after_observation()
                 self._update_last_raw_event()
             self._observe_timeouts(started, last_event, observation, time.monotonic(), timeout_keys)
 
@@ -479,18 +483,9 @@ class Supervisor:
             self._emit("timeout_suspected", **fields)
 
             def mutate(state: object) -> None:
-                if state.status == "running":
-                    state.transition_to(WorkUnitStatus.TIMEOUT_SUSPECTED)
                 state.runtime.setdefault("timeout_observations", []).append({**fields, "observed_at": utc_now()})
 
             self.store.update(mutate)
-
-    def _restore_running_after_observation(self) -> None:
-        def mutate(state: object) -> None:
-            if state.status == "timeout_suspected":
-                state.transition_to(WorkUnitStatus.RUNNING)
-
-        self.store.update(mutate)
 
     def _update_last_raw_event(self) -> None:
         def mutate(state: object) -> None:
@@ -500,56 +495,36 @@ class Supervisor:
 
     def _permission_required(self, return_code: int) -> None:
         def mutate(state: object) -> None:
-            if state.status == "timeout_suspected":
-                state.transition_to(WorkUnitStatus.RUNNING)
             state.transition_to(WorkUnitStatus.PERMISSION_REQUIRED)
             state.runtime["last_exit_code"] = return_code
-            state.runtime["pid"] = None
-            state.runtime["process_group_id"] = None
-            state.runtime["active_run"] = None
+            self._finish_invocation_state(state, "permission_required")
 
         self.store.update(mutate)
         self._emit("permission_required", exit_code=return_code)
 
     def _interrupted(self, return_code: int) -> None:
         def mutate(state: object) -> None:
-            if state.status == "timeout_suspected":
-                state.transition_to(WorkUnitStatus.RUNNING)
             state.transition_to(WorkUnitStatus.INTERRUPTED)
             state.runtime["last_exit_code"] = return_code
-            state.runtime["pid"] = None
-            state.runtime["process_group_id"] = None
-            state.runtime["active_run"] = None
+            self._finish_invocation_state(state, "interrupted")
 
         self.store.update(mutate)
         self._emit("interrupted", exit_code=return_code)
 
     def _backend_failure(self, message: str) -> None:
         def mutate(state: object) -> None:
-            if state.status == "timeout_suspected":
-                state.transition_to(WorkUnitStatus.RUNNING)
             state.transition_to(WorkUnitStatus.BACKEND_FAILURE)
             state.runtime["backend_failure"] = {"message": message, "recorded_at": utc_now()}
-            state.runtime["pid"] = None
-            state.runtime["process_group_id"] = None
-            state.runtime["active_run"] = None
+            self._finish_invocation_state(state, "failed")
 
         self.store.update(mutate)
         self._emit("backend_failure", message=message)
 
     def _complete(self, result: dict[str, object]) -> None:
         def mutate(state: object) -> None:
-            if state.status == "timeout_suspected":
-                state.transition_to(WorkUnitStatus.RUNNING)
             state.data["result"] = result
-            state.runtime["pid"] = None
-            state.runtime["process_group_id"] = None
-            state.runtime["active_run"] = None
-            for segment in state.segments:
-                if segment["session_id"] == self.invocation.session_id:
-                    segment["status"] = "complete"
-                    segment["finished_at"] = utc_now()
-                    break
+            segment = self._finish_invocation_state(state, "complete")
+            self._record_result(state, segment, result)
             if all(segment["status"] == "complete" for segment in state.segments):
                 state.transition_to(WorkUnitStatus.IMPLEMENTATION_COMPLETE)
 
@@ -564,30 +539,52 @@ class Supervisor:
         )
 
         def mutate(state: object) -> None:
-            if state.status == "timeout_suspected":
-                state.transition_to(WorkUnitStatus.RUNNING)
             state.data["result"] = result
             state.transition_to(target)
+            segment = self._finish_invocation_state(
+                state,
+                "permission_required" if target == WorkUnitStatus.PERMISSION_REQUIRED else "interrupted",
+            )
+            self._record_result(state, segment, result)
             if result_status == "PERMISSION_REQUIRED":
                 request = result["permission_requests"][0]
                 state.permissions["pending"] = {
+                    "segment_id": segment["segment_id"],
                     "request": {"origin": "structured_result", **request},
                     "tool_name": request["tool"],
                     "tool_input": {"scope": request["scope"]},
                     "received_at": utc_now(),
                 }
-            state.runtime["pid"] = None
-            state.runtime["process_group_id"] = None
-            state.runtime["active_run"] = None
-            for segment in state.segments:
-                if segment["session_id"] == self.invocation.session_id:
-                    segment["status"] = (
-                        "permission_required" if target == WorkUnitStatus.PERMISSION_REQUIRED else "interrupted"
-                    )
-                    break
-
         self.store.update(mutate)
         self._emit("continuation_required", result_status=result_status, result=result)
+
+    def _finish_invocation_state(self, state: object, segment_status: str) -> dict[str, object]:
+        state.runtime["pid"] = None
+        state.runtime["process_group_id"] = None
+        state.runtime["active_run"] = None
+        segment = next(
+            item for item in state.segments if item["session_id"] == self.invocation.session_id
+        )
+        segment["status"] = segment_status
+        if segment_status in {"complete", "failed"}:
+            segment["finished_at"] = utc_now()
+        return segment
+
+    def _record_result(
+        self,
+        state: object,
+        segment: dict[str, object],
+        result: dict[str, object],
+    ) -> None:
+        state.runtime.setdefault("result_history", []).append(
+            {
+                "segment_id": segment["segment_id"],
+                "session_id": self.invocation.session_id,
+                "launch_token": self.launch_token,
+                "result": result,
+                "recorded_at": utc_now(),
+            }
+        )
 
     def interrupt(self) -> None:
         self.interrupt_requested = True
