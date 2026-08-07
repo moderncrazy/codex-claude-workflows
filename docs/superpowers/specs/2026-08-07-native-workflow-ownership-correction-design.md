@@ -18,7 +18,7 @@ The orchestration Skill may choose between an implicit task and the native Spec/
 - When the native workflow routes an in-scope finding back to implementation, the adapter resumes the owning Claude Session or creates a bounded Repair Segment.
 - Ticket claiming, closing, commenting, and frontier changes occur only when the configured native Tracker instructions require them.
 - Implicit tasks never require Tracker setup.
-- Because current `implement` and `code-review` disagree about whether Review precedes the commit that makes `<fixed-point>...HEAD` non-empty, the adapter describes the checkpoint commit as a compatibility precondition, not Matt-native lifecycle. It creates no additional post-Review commit unless the native workflow or actual fixes require one.
+- Because native `implement` places Review before commit while `code-review` normally consumes `<fixed-point>...HEAD`, the adapter preserves the ordering and substitutes the complete working-tree change as Review input. It creates no pre-Review commit; native `implement` commits only after Review is accepted.
 
 ## Superpowers workflow
 

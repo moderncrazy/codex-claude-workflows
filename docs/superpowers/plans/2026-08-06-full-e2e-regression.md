@@ -187,26 +187,23 @@ Read(/Users/geekeryoung.gao/Documents/Codex/2026-08-05/new-chat/work/codex-claud
 Bash(python3 -m unittest discover -s tests -v)
 Bash(git status --short)
 Bash(git diff --check)
-Bash(git add ttl_cache/__init__.py ttl_cache/cache.py tests/test_cache.py README.md)
-Bash(git commit -m "feat: implement TTL cache")
-Bash(git commit -m "fix: address review feedback")
 ```
 
 - [ ] **Step 4: Execute native Implement with real Claude Code**
 
-Invoke native `implement` as owner. Generate a fresh UUID distinct from Task 1, call Claude Code with the bundled Schema, validate structured output and Session ID, require Red then Green evidence, and have Claude create one local review checkpoint commit. Do not create a Ticket or second ledger.
+Invoke native `implement` as owner. Generate a fresh UUID distinct from Task 1, call Claude Code with the bundled Schema, validate structured output and Session ID, and require Red then Green evidence without creating a commit. Do not create a Ticket or second ledger.
 
-- [ ] **Step 5: Run native fixed-point Code Review**
+- [ ] **Step 5: Run native two-axis working-tree Review**
 
-Invoke native `code-review` against `<baseline>...HEAD`. Confirm the diff is non-empty and complete. Preserve Standards and Spec findings separately. If neither axis reports a valid finding, record a regression-only request to strengthen one existing public-behavior test without changing the API or product scope.
+Use native `code-review`'s Standards and Spec axes with `git status --short`, `git diff --stat <baseline>`, `git diff <baseline>`, and the contents of files listed by `git ls-files --others --exclude-standard`. Confirm the complete working-tree change is non-empty. Preserve both findings separately. If neither axis reports a valid finding, record a regression-only request to strengthen one existing public-behavior test without changing the API or product scope.
 
 - [ ] **Step 6: Resume the original Claude Session for the fix**
 
-Use `--resume <implicit-task-session-id>` with the same Schema. Supply only the accepted finding or test-hardening request. Verify the returned Session ID, rerun tests, and create a separate local fix commit without amending the checkpoint.
+Use `--resume <implicit-task-session-id>` with the same Schema. Supply only the accepted finding or test-hardening request. Verify the returned Session ID and rerun tests without committing.
 
 - [ ] **Step 7: Re-review and complete the implicit task**
 
-Rerun native `code-review` against the original baseline, run `python3 -m unittest discover -s tests -v`, and record both Review axes, both commit SHAs, test evidence, Session ID, and clean status. Do not run a cross-Ticket Final Review or create Tracker state.
+Rerun the two-axis working-tree Review against the original baseline, run `python3 -m unittest discover -s tests -v`, then create the native post-Review commit and record its SHA, both Review axes, test evidence, Session ID, and clean status. Do not run a cross-Ticket Final Review or create Tracker state.
 
 ## Task 3: Compare Evidence and Report
 

@@ -21,7 +21,7 @@ Before routing, read [executor-contract.md](references/executor-contract.md) and
 3. **Choose scale.** Use an implicit task for one native work unit; use native Spec/Tickets for cross-session work or multiple tracer bullets.
 4. **Confirm seams.** **REQUIRED SUB-SKILL:** Use `tdd` and obtain the native confirmation.
 5. **Implement.** **REQUIRED SUB-SKILL:** Use `implement` as workflow owner. Apply the adapters only at implementer dispatch.
-6. **Review and complete.** Follow the lifecycle adapter while native `implement`, `code-review`, and configured Tracker instructions decide Review disposition, fixes, verification, commits, and completion.
+6. **Review and complete.** Follow the lifecycle adapter's working-tree input adaptation so native `implement` keeps Review before commit; native `code-review` axes and configured Tracker instructions still decide Review disposition, fixes, verification, commits, and completion.
 
 ## Native paths
 

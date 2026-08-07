@@ -670,7 +670,7 @@ For Review fixes, map a finding to the relevant Segment Session; create a Repair
 
 - [ ] **Step 4: Update the Matt adapter**
 
-Keep Spec, Ticket/implicit-task, fixed point, TDD seams, the compatibility checkpoint required by commit-range `code-review`, and the two-axis `code-review`. Let the Native Workflow decide Review disposition, fixes, and any operations defined by the configured Tracker. Store no Runner state in the Tracker.
+Keep Spec, Ticket/implicit-task, fixed point, TDD seams, review-before-commit ordering, and the two-axis `code-review`. Adapt only the Review input to include the complete working-tree change. Let the Native Workflow decide Review disposition, fixes, and any operations defined by the configured Tracker. Store no Runner state in the Tracker.
 
 When the Native Workflow routes a single-Segment finding back to implementation, resume that Session. For cross-Segment findings, let Codex add a Repair Segment; do not add Final Review or Verify Review.
 
@@ -723,7 +723,7 @@ Verify init, Segment 1, a safe permission interruption and resume, Segment 2 wit
 
 - [ ] **Step 3: Exercise the complete Matt-shaped path**
 
-Verify fixed-point preservation, Segment implementation, local checkpoint commit evidence, an accepted Review finding routed to a Repair Segment, second verification, implementation handoff, preserved Tracker ownership, and exact UUID cleanup.
+Verify fixed-point preservation, Segment implementation without a pre-Review commit, an accepted Review finding routed to a Repair Segment, second verification, post-Review commit evidence, implementation handoff, preserved Tracker ownership, and exact UUID cleanup.
 
 - [ ] **Step 4: Exercise every backend failure**
 

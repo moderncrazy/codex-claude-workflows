@@ -69,9 +69,9 @@ State that native Review disposition decides whether implementation continues; r
 
 Require only operations explicitly defined by the configured Tracker and only on the Ticket path. Remove invented universal claim, close, comment, and unclaimed-frontier rules.
 
-- [ ] **Step 3: Label the Matt checkpoint as compatibility behavior**
+- [ ] **Step 3: Preserve Matt review-before-commit ordering**
 
-Explain the committed-diff requirement without calling it native lifecycle. Avoid mandatory extra fix commits when no new implementation change exists.
+Adapt the two-axis Review input to the complete working-tree change. Do not create a pre-Review commit or separate commits for Review fixes; commit the accepted change only after native Review.
 
 - [ ] **Step 4: Permit sequential overlap**
 

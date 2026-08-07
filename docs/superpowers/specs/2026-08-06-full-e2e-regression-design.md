@@ -26,9 +26,9 @@ After the first native Task Review, Codex records one small in-scope Review find
 
 The Matt workflow uses its implicit-task path because the regression is one cohesive session and no real Tracker is configured. Codex owns clarification, domain decisions, public test-seam confirmation, fixed-point capture, Review, verification, and completion.
 
-Claude Code `sonnet` performs the Red-Green implementation and creates the orchestrator-requested local review checkpoint commit. Native `code-review` evaluates the non-empty fixed-point-to-HEAD diff on both Standards and Spec axes.
+Claude Code `sonnet` performs the Red-Green implementation without committing. The adapter supplies the complete fixed-point-to-working-tree change, including untracked implementation files, to native `code-review`'s Standards and Spec axes.
 
-After the first Review, Codex records one small in-scope finding. The same Claude Session performs the requested fix and creates a separate local fix commit. Native `code-review` reruns against the original fixed point. The implicit task completes without a Ticket, Tracker mutation, cross-Ticket Final Review, or second ledger.
+After the first Review, Codex records one small in-scope finding. The same Claude Session performs the requested fix without committing, and the two-axis Review reruns against the original fixed point and complete current working tree. Once Review is accepted, native `implement` creates the local commit. The implicit task completes without a Ticket, Tracker mutation, cross-Ticket Final Review, or second ledger.
 
 ## Mandatory Evidence
 
@@ -39,7 +39,7 @@ Each regression must preserve:
 - Red then Green test evidence;
 - native workflow state and reports;
 - the Review findings and post-fix Review disposition;
-- local checkpoint and fix commit SHAs where the native workflow requires them;
+- the accepted post-Review commit SHA where the native workflow requires it;
 - final focused and full-suite test output;
 - clean, auditable repository status at completion.
 

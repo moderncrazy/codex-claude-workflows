@@ -79,11 +79,18 @@ class MattLifecycleTests(unittest.TestCase):
 
         text = lifecycle.read_text().lower()
         self.assertIn("native workflow", text)
-        self.assertIn("compatibility checkpoint", text)
+        self.assertIn("working-tree review", text)
+        self.assertIn("git diff <fixed-point>", text)
+        self.assertIn("git ls-files --others --exclude-standard", text)
+        self.assertIn("review is accepted", text)
+        self.assertNotIn("compatibility checkpoint", text)
+        self.assertNotIn("checkpoint commit", text)
         self.assertIn("only when", text)
         self.assertIn("configured tracker", text)
         self.assertIn("do not push, merge, amend, rebase, reset, or tag", text)
         self.assertIn("do not add a cross-ticket final review or verify review", text)
+        self.assertLess(text.index("working-tree review"), text.index("review is accepted"))
+        self.assertLess(text.index("review is accepted"), text.index("commit the accepted"))
         for invasive_policy in (
             "user-directed fixes",
             "do not start fixes automatically",
@@ -177,6 +184,15 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
             self.assertIn("shell/interpreter wildcard", protocol)
             self.assertIn("push", protocol)
             self.assertIn("history rewriting", protocol)
+
+        matt_protocol = (
+            ROOT
+            / "skills"
+            / "matt-claude-workflow"
+            / "references"
+            / "claude-execution-protocol.md"
+        ).read_text().lower()
+        self.assertIn("never pre-approve commit", matt_protocol)
 
     def test_codex_brokers_new_tool_permissions_without_interrupting_the_user(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):

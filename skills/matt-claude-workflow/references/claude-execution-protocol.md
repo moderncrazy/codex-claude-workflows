@@ -16,13 +16,13 @@ Pass the bundled result Schema verbatim. Do not add provider IDs or fallback mod
 
 ## Initial command permissions
 
-Derive the smallest task-scoped command-family allowlist from confirmed Red/Green tests, full suite, lint, typecheck, formatter, local inspection, and the exact local checkpoint commit commands authorized by the lifecycle.
+Derive the smallest task-scoped command-family allowlist from confirmed Red/Green tests, full suite, lint, typecheck, formatter, and local inspection. Native Review and the post-Review commit remain Codex-owned workflow actions outside the Claude Runner.
 
 - `.venv/bin/pytest ...` → `Bash(.venv/bin/pytest *)`, including version or help probes.
 - `python -m pytest ...` → `Bash(python -m pytest *)`, never a Python wildcard.
 - Include `Bash(git status *)` and `Bash(git diff *)`.
 
-Pass every family through Runner `init`; the Runner emits repeated `--allowedTools`. Never pre-approve package installation, network commands, push, merge, deployment, history rewriting (amend/rebase/reset/tag), a shell/interpreter wildcard, bare `Bash`, or Agent delegation.
+Pass every family through Runner `init`; the Runner emits repeated `--allowedTools`. Never pre-approve commit, package installation, network commands, push, merge, deployment, history rewriting (amend/rebase/reset/tag), a shell/interpreter wildcard, bare `Bash`, or Agent delegation.
 
 ## Progress and time
 
