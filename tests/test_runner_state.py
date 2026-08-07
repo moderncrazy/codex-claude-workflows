@@ -11,7 +11,7 @@ from pathlib import Path
 RUNNER_ROOT = Path(__file__).parents[1] / "shared" / "claude-runner"
 sys.path.insert(0, str(RUNNER_ROOT))
 
-from runner.contracts import ContractError, InvalidTransition, WorkUnitState  # noqa: E402
+from runner.contracts import ContractError, InvalidTransition, WorkUnitState, upgrade_state_dict  # noqa: E402
 from runner.state_store import StateStore  # noqa: E402
 
 
@@ -21,7 +21,7 @@ WORK_UNIT_ID = "8c606b8c-89c3-457a-a4bc-754b7513fb2c"
 def sample_work_unit(root: Path) -> WorkUnitState:
     return WorkUnitState.from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "work_unit_id": WORK_UNIT_ID,
             "workflow": "superpowers",
             "native_ref": "Task 1",
@@ -38,13 +38,14 @@ def sample_work_unit(root: Path) -> WorkUnitState:
                     "status": "pending",
                     "session_id": None,
                     "attempt": 0,
+                    "resume_count": 0,
                     "created_at": "2026-08-06T00:00:00Z",
                     "started_at": None,
                     "finished_at": None,
                 }
             ],
-            "permissions": {"initial": [], "approved": [], "pending": None},
-            "runtime": {},
+            "permissions": {"initial": [], "approved": [], "pending": None, "resolved": []},
+            "runtime": {"result_history": []},
             "progress_claims": [],
             "evidence": {"declared": [], "verified": []},
             "commits": [],
@@ -67,6 +68,89 @@ def record_claim(state_dir: str, number: int) -> None:
 
 
 class StateStoreTests(unittest.TestCase):
+    def test_schema_version_one_is_migrated_before_validation(self) -> None:
+        legacy = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        legacy["schema_version"] = 1
+        legacy["permissions"].pop("resolved")
+        legacy["segments"][0].pop("resume_count")
+        legacy["segments"][0]["session_id"] = "37af868d-e830-42ca-94dd-a5523d30f616"
+        legacy["segments"][0]["attempt"] = 0
+        legacy["runtime"].pop("result_history")
+
+        migrated = upgrade_state_dict(legacy)
+
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["segments"][0]["attempt"], 1)
+        self.assertEqual(migrated["segments"][0]["resume_count"], 0)
+        self.assertEqual(migrated["permissions"]["resolved"], [])
+        self.assertEqual(migrated["runtime"]["result_history"], [])
+
+    def test_legacy_timeout_is_migrated_to_running_observation_state(self) -> None:
+        legacy = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        legacy["schema_version"] = 1
+        legacy["status"] = "timeout_suspected"
+        legacy["permissions"].pop("resolved")
+        legacy["segments"][0].pop("resume_count")
+
+        self.assertEqual(upgrade_state_dict(legacy)["status"], "running")
+
+    def test_legacy_pending_permission_is_attributed_to_unique_segment(self) -> None:
+        legacy = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        legacy["schema_version"] = 1
+        legacy["status"] = "permission_required"
+        legacy["permissions"].pop("resolved")
+        legacy["permissions"]["pending"] = {
+            "request": {"tool_name": "Bash"},
+            "tool_name": "Bash",
+            "tool_input": {"command": "pytest"},
+            "received_at": "2026-08-06T00:00:00Z",
+        }
+        legacy["segments"][0].pop("resume_count")
+        legacy["segments"][0]["status"] = "permission_required"
+
+        migrated = upgrade_state_dict(legacy)
+
+        self.assertEqual(migrated["permissions"]["pending"]["segment_id"], "segment-1")
+
+    def test_legacy_pending_permission_without_unique_segment_is_rejected(self) -> None:
+        legacy = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+        legacy["schema_version"] = 1
+        legacy["status"] = "permission_required"
+        legacy["permissions"].pop("resolved")
+        legacy["permissions"]["pending"] = {
+            "request": {"tool_name": "Bash"},
+            "tool_name": "Bash",
+            "tool_input": {"command": "pytest"},
+            "received_at": "2026-08-06T00:00:00Z",
+        }
+        legacy["segments"][0].pop("resume_count")
+
+        with self.assertRaises(ContractError):
+            upgrade_state_dict(legacy)
+
+    def test_state_store_loads_legacy_state_as_version_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore.create(sample_work_unit(Path(directory)))
+            legacy = store.load().to_dict()
+            legacy["schema_version"] = 1
+            legacy["permissions"].pop("resolved")
+            legacy["segments"][0].pop("resume_count")
+            store.state_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            loaded = store.load()
+
+            self.assertEqual(loaded.schema_version, 2)
+            self.assertEqual(loaded.segments[0]["resume_count"], 0)
+
+    def test_version_two_rejects_removed_lifecycle_statuses(self) -> None:
+        for status in ("timeout_suspected", "cleaned"):
+            with self.subTest(status=status):
+                state = sample_work_unit(Path(tempfile.gettempdir())).to_dict()
+                state["status"] = status
+
+                with self.assertRaises(ContractError):
+                    WorkUnitState.from_dict(state)
+
     def test_progress_claim_is_stored_verbatim_with_runner_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = StateStore.create(sample_work_unit(Path(directory)))

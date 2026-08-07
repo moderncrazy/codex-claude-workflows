@@ -9,7 +9,7 @@
     "progress_claims", "evidence", "commits", "result"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "work_unit_id": {"type": "string", "format": "uuid"},
     "workflow": {"enum": ["superpowers", "matt"]},
     "native_ref": {"type": "string"},
@@ -20,12 +20,12 @@
       "required": ["agent", "capability"],
       "properties": {"agent": {"const": "claude-code"}, "capability": {"enum": ["sonnet", "opus"]}}
     },
-    "status": {"enum": ["initialized", "running", "permission_required", "timeout_suspected", "interrupted", "backend_failure", "implementation_complete", "cleaned"]},
+    "status": {"enum": ["initialized", "running", "permission_required", "interrupted", "backend_failure", "implementation_complete", "finished"]},
     "segments": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/segment"}},
     "permissions": {
       "type": "object", "additionalProperties": false,
-      "required": ["initial", "approved", "pending"],
-      "properties": {"initial": {"type": "array"}, "approved": {"type": "array"}, "pending": {"type": ["object", "null"]}}
+      "required": ["initial", "approved", "pending", "resolved"],
+      "properties": {"initial": {"type": "array"}, "approved": {"type": "array"}, "pending": {"type": ["object", "null"]}, "resolved": {"type": "array"}}
     },
     "runtime": {"type": "object"},
     "progress_claims": {"type": "array"},
@@ -40,12 +40,12 @@
   "definitions": {
     "segment": {
       "type": "object", "additionalProperties": false,
-      "required": ["segment_id", "kind", "scope", "verification_commands", "status", "session_id", "attempt", "created_at", "started_at", "finished_at"],
+      "required": ["segment_id", "kind", "scope", "verification_commands", "status", "session_id", "attempt", "resume_count", "created_at", "started_at", "finished_at"],
       "properties": {
         "segment_id": {"type": "string"}, "kind": {"type": "string"}, "scope": {"type": "string"},
         "verification_commands": {"type": "array", "items": {"type": "string"}},
         "status": {"enum": ["pending", "running", "permission_required", "interrupted", "complete", "failed"]},
-        "session_id": {"type": ["string", "null"]}, "attempt": {"type": "integer", "minimum": 0},
+        "session_id": {"type": ["string", "null"]}, "attempt": {"type": "integer", "minimum": 0}, "resume_count": {"type": "integer", "minimum": 0},
         "created_at": {"type": "string"}, "started_at": {"type": ["string", "null"]}, "finished_at": {"type": ["string", "null"]},
         "finding_ids": {"type": "array", "items": {"type": "string"}},
         "capability": {"enum": ["sonnet", "opus"]}
