@@ -288,29 +288,9 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
             )
         if continuation_context and len(continuation_context.encode("utf-8")) > 65536:
             raise CliError("continuation_context_too_large", "continuation context exceeds 65536 UTF-8 bytes")
-        if segment["status"] == "complete":
-            def reopen(current: WorkUnitState) -> None:
-                target = next(item for item in current.segments if item["segment_id"] == segment["segment_id"])
-                target["status"] = "running"
-                target["finished_at"] = None
-                current.evidence["verified"] = [
-                    item for item in current.evidence["verified"] if item.get("segment_id") != target["segment_id"]
-                ]
-                current.runtime.pop("implementation_handoff_at", None)
-                if current.status == "implementation_complete":
-                    current.transition_to(WorkUnitStatus.RUNNING)
-
-            state = store.update(reopen)
-            segment = next(item for item in state.segments if item["segment_id"] == segment["segment_id"])
-    elif segment["session_id"] is None:
+        session_id = str(segment["session_id"])
+    else:
         session_id = str(uuid.uuid4())
-
-        def assign(current: WorkUnitState) -> None:
-            target = next(item for item in current.segments if item["segment_id"] == segment["segment_id"])
-            target["session_id"] = session_id
-
-        state = store.update(assign)
-        segment = next(item for item in state.segments if item["segment_id"] == segment["segment_id"])
     configuration = state.runtime["configuration"]
     reporter = {
         "mcpServers": {
@@ -324,7 +304,8 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
     invocation = ClaudeInvocation(
         executable=Path(configuration["claude_executable"]),
         working_root=Path(state.working_root),
-        session_id=str(segment["session_id"]),
+        segment_id=str(segment["segment_id"]),
+        session_id=session_id,
         resume=resume,
         capability=segment.get("capability", state.executor["capability"]),
         allowed_tools=tuple(
@@ -472,7 +453,7 @@ def _finish(args: argparse.Namespace) -> int:
         with inactive_lease_guard(store.state_dir):
             store.update(mutate)
     except ActiveRunError as exc:
-        raise CliError("active_process", "cannot mark handoff while the Runner is active") from exc
+        raise CliError("active_process", "cannot finish while the Runner is active") from exc
     _emit(_state_summary(store))
     return 0
 

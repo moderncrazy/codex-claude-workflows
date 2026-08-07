@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from dataclasses import replace
@@ -18,7 +19,7 @@ sys.path.insert(0, str(RUNNER_ROOT))
 from runner.permission_hooks import build_hook_settings  # noqa: E402
 from runner.contracts import ContractError  # noqa: E402
 from runner.state_store import StateStore  # noqa: E402
-from runner.supervisor import ClaudeInvocation, Supervisor  # noqa: E402
+from runner.supervisor import ActiveRunError, ClaudeInvocation, Supervisor  # noqa: E402
 from tests.test_runner_state import sample_work_unit  # noqa: E402
 
 
@@ -28,12 +29,12 @@ SESSION_ID = "0c2fb298-155f-4af0-bc6f-35e229fd27f3"
 class SupervisorTests(unittest.TestCase):
     def make_supervisor(self, root: Path, scenario: str, **thresholds: float) -> tuple[StateStore, Supervisor, list[dict[str, object]]]:
         state = sample_work_unit(root)
-        state.segments[0]["session_id"] = SESSION_ID
         store = StateStore.create(state)
         settings = build_hook_settings(store.state_dir, Path(sys.executable), RUNNER_ROOT / "claude_runner.py")
         invocation = ClaudeInvocation(
             executable=FIXTURE,
             working_root=root,
+            segment_id="segment-1",
             session_id=SESSION_ID,
             resume=False,
             capability="sonnet",
@@ -47,6 +48,95 @@ class SupervisorTests(unittest.TestCase):
         environment = dict(os.environ, FAKE_CLAUDE_SCENARIO=scenario, FAKE_CLAUDE_DELAY="0.12")
         supervisor = Supervisor(store, invocation, event_sink=events.append, environment=environment, **thresholds)
         return store, supervisor, events
+
+    def test_concurrent_initial_launch_reserves_one_session_under_active_lease(self) -> None:
+        class BarrierSupervisor(Supervisor):
+            def _acquire_active_lease(self) -> None:
+                launch_barrier.wait(timeout=5)
+                super()._acquire_active_lease()
+
+            def _install_control_handlers(self) -> None:
+                pass
+
+            def _restore_control_handlers(self) -> None:
+                pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = sample_work_unit(root)
+            store = StateStore.create(state)
+            settings = build_hook_settings(store.state_dir, Path(sys.executable), RUNNER_ROOT / "claude_runner.py")
+            launch_barrier = threading.Barrier(2)
+            session_ids = (
+                "0c2fb298-155f-4af0-bc6f-35e229fd27f3",
+                "3ec1c07a-584c-4fef-a29b-3bd55b056ab4",
+            )
+            supervisors = [
+                BarrierSupervisor(
+                    store,
+                    ClaudeInvocation(
+                        executable=FIXTURE,
+                        working_root=root,
+                        segment_id="segment-1",
+                        session_id=session_id,
+                        resume=False,
+                        capability="sonnet",
+                        allowed_tools=(),
+                        reporter_config_json=json.dumps({"mcpServers": {}}),
+                        hook_settings_json=json.dumps(settings),
+                        result_schema=RESULT_SCHEMA,
+                        prompt="Implement the fixture",
+                    ),
+                    environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="model-idle", FAKE_CLAUDE_DELAY="0.4"),
+                )
+                for session_id in session_ids
+            ]
+            outcomes: list[tuple[int, int | BaseException]] = []
+
+            def launch(index: int) -> None:
+                try:
+                    outcomes.append((index, supervisors[index].run()))
+                except BaseException as exc:
+                    outcomes.append((index, exc))
+
+            threads = [threading.Thread(target=launch, args=(index,)) for index in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            successful = [index for index, result in outcomes if result == 0]
+            rejected = [result for _, result in outcomes if isinstance(result, ActiveRunError)]
+            self.assertEqual(len(successful), 1, outcomes)
+            self.assertEqual(len(rejected), 1, outcomes)
+            persisted = store.load().segments[0]
+            self.assertEqual(persisted["session_id"], session_ids[successful[0]])
+            self.assertEqual(persisted["attempt"], 1)
+
+    def test_post_spawn_reservation_mismatch_reaps_child_and_records_failure(self) -> None:
+        class MismatchingSupervisor(Supervisor):
+            def _set_running(self, process: object) -> None:
+                self.store.update(
+                    lambda state: state.segments[0].__setitem__(
+                        "session_id", "3ec1c07a-584c-4fef-a29b-3bd55b056ab4"
+                    )
+                )
+                super()._set_running(process)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store, original, _ = self.make_supervisor(Path(directory), "model-idle")
+            supervisor = MismatchingSupervisor(
+                store,
+                original.invocation,
+                environment=original.environment,
+            )
+
+            self.assertEqual(supervisor.run(), 1)
+            state = store.load()
+            self.assertEqual(state.status, "backend_failure")
+            self.assertEqual(state.segments[0]["status"], "failed")
+            self.assertIsNone(supervisor.process)
 
     def test_invocation_contains_required_flags_and_no_bypass_flags(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -78,6 +78,7 @@ PROGRESS_TOOL_IDENTIFIER = "mcp__codex_claude_runner__report_progress"
 class ClaudeInvocation:
     executable: Path
     working_root: Path
+    segment_id: str
     session_id: str
     resume: bool
     capability: Literal["sonnet", "opus"]
@@ -181,6 +182,37 @@ class Supervisor:
         def reserve(state: object) -> None:
             if state.permissions["pending"] is not None:
                 raise ContractError("pending permission blocks dispatch")
+            if state.status == "finished":
+                raise ContractError("a finished Work Unit cannot be dispatched")
+            segment = next(
+                (item for item in state.segments if item["segment_id"] == self.invocation.segment_id),
+                None,
+            )
+            if segment is None:
+                raise ContractError(f"unknown Segment {self.invocation.segment_id}")
+            segment_index = state.segments.index(segment)
+            if not self.invocation.resume and segment_index > 0:
+                predecessor = state.segments[segment_index - 1]
+                if predecessor["status"] != "complete":
+                    raise ContractError(
+                        f"complete {predecessor['segment_id']} before starting {segment['segment_id']}"
+                    )
+            if self.invocation.resume:
+                if segment["session_id"] != self.invocation.session_id:
+                    raise ContractError("recorded Segment Session ID changed before resume")
+                if segment["status"] == "complete":
+                    state.evidence["verified"] = [
+                        item
+                        for item in state.evidence["verified"]
+                        if item.get("segment_id") != segment["segment_id"]
+                    ]
+                    state.runtime.pop("implementation_handoff_at", None)
+                segment["resume_count"] += 1
+            else:
+                if segment["status"] != "pending" or segment["session_id"] is not None:
+                    raise ContractError("a new Session requires a pending Segment without a Session ID")
+                segment["session_id"] = self.invocation.session_id
+                segment["attempt"] += 1
             active = state.runtime.get("active_run")
             if isinstance(active, dict):
                 state.runtime.setdefault("stale_runs", []).append(active)
@@ -188,6 +220,9 @@ class Supervisor:
                 state.transition_to(WorkUnitStatus.RUNNING)
             state.runtime.pop("control_requested", None)
             state.data["result"] = None
+            segment["status"] = "running"
+            segment["started_at"] = segment["started_at"] or utc_now()
+            segment["finished_at"] = None
             state.runtime["active_run"] = {
                 "launch_token": self.launch_token,
                 "controller_pid": os.getpid(),
@@ -291,26 +326,18 @@ class Supervisor:
             if self.invocation.continuation_context is not None:
                 state.runtime.setdefault("continuation_inputs", []).append(
                     {
-                        "segment_id": next(
-                            segment["segment_id"]
-                            for segment in state.segments
-                            if segment["session_id"] == self.invocation.session_id
-                        ),
+                        "segment_id": self.invocation.segment_id,
                         "session_id": self.invocation.session_id,
                         "context": self.invocation.continuation_context,
                         "supplied_at": utc_now(),
                     }
                 )
-            for segment in state.segments:
-                if segment["session_id"] == self.invocation.session_id:
-                    segment["status"] = "running"
-                    if self.invocation.resume:
-                        segment["resume_count"] += 1
-                    else:
-                        segment["attempt"] += 1
-                    segment["started_at"] = segment["started_at"] or utc_now()
-                    segment["finished_at"] = None
-                    break
+            segment = next(
+                (item for item in state.segments if item["segment_id"] == self.invocation.segment_id),
+                None,
+            )
+            if segment is None or segment["session_id"] != self.invocation.session_id:
+                raise ActiveRunError("reserved Segment changed before process start")
 
         self.store.update(mutate)
 
@@ -341,13 +368,8 @@ class Supervisor:
         self.process = process
         try:
             self._set_running(process)
-        except (OSError, RuntimeError, ActiveRunError) as exc:
-            if os.name == "nt":
-                process.terminate()
-            else:
-                os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=5)
-            self.process = None
+        except Exception as exc:
+            self._reap_failed_launch(process)
             self._backend_failure(f"failed to establish Runner process identity: {exc}")
             return 1
         started = last_event = time.monotonic()
@@ -446,6 +468,29 @@ class Supervisor:
         self._emit("process_exited", exit_code=return_code)
         return 0
 
+    def _reap_failed_launch(self, process: subprocess.Popen[bytes]) -> None:
+        try:
+            if os.name == "nt":
+                process.terminate()
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+        except ProcessLookupError:
+            process.wait(timeout=5)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+            self.process = None
+
     def _heartbeat(self, started: float, now: float) -> None:
         state = self.store.load()
         last_claim = state.progress_claims[-1]["received_at"] if state.progress_claims else None
@@ -515,7 +560,7 @@ class Supervisor:
         def mutate(state: object) -> None:
             state.transition_to(WorkUnitStatus.BACKEND_FAILURE)
             state.runtime["backend_failure"] = {"message": message, "recorded_at": utc_now()}
-            self._finish_invocation_state(state, "failed")
+            self._finish_invocation_state(state, "failed", require_session_match=False)
 
         self.store.update(mutate)
         self._emit("backend_failure", message=message)
@@ -558,13 +603,21 @@ class Supervisor:
         self.store.update(mutate)
         self._emit("continuation_required", result_status=result_status, result=result)
 
-    def _finish_invocation_state(self, state: object, segment_status: str) -> dict[str, object]:
+    def _finish_invocation_state(
+        self,
+        state: object,
+        segment_status: str,
+        *,
+        require_session_match: bool = True,
+    ) -> dict[str, object]:
         state.runtime["pid"] = None
         state.runtime["process_group_id"] = None
         state.runtime["active_run"] = None
         segment = next(
-            item for item in state.segments if item["session_id"] == self.invocation.session_id
+            item for item in state.segments if item["segment_id"] == self.invocation.segment_id
         )
+        if require_session_match and segment["session_id"] != self.invocation.session_id:
+            raise ContractError("reserved Segment Session ID changed before invocation completion")
         segment["status"] = segment_status
         if segment_status in {"complete", "failed"}:
             segment["finished_at"] = utc_now()
