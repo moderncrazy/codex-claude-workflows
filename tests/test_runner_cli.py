@@ -124,7 +124,7 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(result["error"], "tmp_not_ignored")
             self.assertFalse((root / ".tmp").exists())
 
-    def test_success_lifecycle_uses_optional_evidence_and_native_cleanup_assertion(self) -> None:
+    def test_success_lifecycle_requires_explicit_native_finish_before_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)
             state_dir = self.init_work_unit(root, "63b4821f-15b1-474c-9664-d9d272cc05ad")
@@ -155,17 +155,61 @@ class RunnerCliTests(unittest.TestCase):
             self.assertTrue(any(line.get("kind") == "process_exited" for line in wait_lines))
             self.assertEqual(wait_lines[-1]["status"], "implementation_complete")
             rejected = self.run_cli("cleanup", "--state-dir", str(state_dir), expected=2)
-            self.assertEqual(rejected["error"], "native_completion_required")
-            finished = self.run_cli("finish", "--state-dir", str(state_dir))
-            self.assertEqual(finished["status"], "implementation_complete")
-            cleaned = self.run_cli(
+            self.assertEqual(rejected["error"], "finish_required")
+            legacy_bypass = self.run_cli(
                 "cleanup",
                 "--state-dir",
                 str(state_dir),
                 "--native-workflow-complete",
+                expected=2,
             )
+            self.assertEqual(legacy_bypass["error"], "finish_required")
+            missing_assertion = self.run_cli("finish", "--state-dir", str(state_dir), expected=2)
+            self.assertEqual(missing_assertion["error"], "native_completion_required")
+            finished = self.run_cli(
+                "finish",
+                "--state-dir",
+                str(state_dir),
+                "--native-workflow-complete",
+            )
+            self.assertEqual(finished["status"], "finished")
+            cleaned = self.run_cli("cleanup", "--state-dir", str(state_dir))
             self.assertEqual(cleaned["status"], "cleaned")
             self.assertFalse(state_dir.exists())
+
+    def test_finish_rejects_incomplete_or_permission_blocked_work_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "e3b1f7af-d473-4b5a-ac77-fd43b4f1eb31")
+
+            incomplete = self.run_cli(
+                "finish",
+                "--state-dir",
+                str(state_dir),
+                "--native-workflow-complete",
+                expected=2,
+            )
+            self.assertEqual(incomplete["error"], "segments_incomplete")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "bc56161d-b464-49fb-b563-b6867705db3b")
+            self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="permission"),
+                expected=3,
+            )
+
+            blocked = self.run_cli(
+                "finish",
+                "--state-dir",
+                str(state_dir),
+                "--native-workflow-complete",
+                expected=2,
+            )
+            self.assertEqual(blocked["error"], "pending_permission")
 
     def test_optional_verification_evidence_is_still_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -213,7 +257,7 @@ class RunnerCliTests(unittest.TestCase):
                 descriptor = os.open(state_dir / "raw-events.jsonl", os.O_RDWR)
                 fcntl.flock(descriptor, fcntl.LOCK_EX)
                 try:
-                    arguments = [action, "--state-dir", str(state_dir)]
+                    arguments = [action, "--state-dir", str(state_dir), "--native-workflow-complete"]
                     if action == "repair":
                         arguments = [
                             "add-repair-segment",
@@ -252,7 +296,7 @@ class RunnerCliTests(unittest.TestCase):
                 )
                 state_lock = os.open(state_dir, os.O_RDONLY)
                 fcntl.flock(state_lock, fcntl.LOCK_EX)
-                arguments = [action, "--state-dir", str(state_dir)]
+                arguments = [action, "--state-dir", str(state_dir), "--native-workflow-complete"]
                 if action == "repair":
                     arguments = [
                         "add-repair-segment",
@@ -630,26 +674,65 @@ class RunnerCliTests(unittest.TestCase):
             recovered_state = json.loads(state_path.read_text())
             self.assertNotIn("control_requested", recovered_state["runtime"])
 
-    def test_reopening_or_repairing_invalidates_prior_finish_authorization(self) -> None:
+    def test_stale_control_identity_fails_running_segment_and_clears_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "a9d6a6b4-7fb7-4ccc-a4b8-479e71a60fc0")
+            state_path = state_dir / "work-unit.json"
+            state = json.loads(state_path.read_text())
+            state["status"] = "running"
+            state["segments"][0]["status"] = "running"
+            state["segments"][0]["session_id"] = "c301fb82-71dd-46a4-9d18-bbce90e70bef"
+            state["segments"][0]["attempt"] = 1
+            state["runtime"]["active_run"] = {
+                "launch_token": "stale",
+                "controller_pid": 999999,
+                "identity": {"pid": 999999},
+                "reserved_at": "2026-08-07T00:00:00Z",
+            }
+            state["result"] = {"status": "DONE", "summary": "stale"}
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            rejected = self.run_cli(
+                "interrupt",
+                "--state-dir",
+                str(state_dir),
+                expected=2,
+            )
+
+            self.assertEqual(rejected["error"], "unsafe_process_identity")
+            failed = json.loads(state_path.read_text())
+            self.assertEqual(failed["status"], "backend_failure")
+            self.assertEqual(failed["segments"][0]["status"], "failed")
+            self.assertIsNone(failed["result"])
+            self.assertIsNone(failed["runtime"]["active_run"])
+
+    def test_finished_work_unit_rejects_reopen_and_repair(self) -> None:
         for mode in ("resume", "repair"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = self.make_repo(directory)
                 state_dir = self.init_work_unit(root, f"2d20555b-83d8-4c18-9306-6858e0149d{1 if mode == 'resume' else 2:02d}")
                 environment = dict(os.environ, FAKE_CLAUDE_SCENARIO="success")
                 self.run_cli("run", "--state-dir", str(state_dir), environment=environment)
-                self.run_cli("finish", "--state-dir", str(state_dir))
+                self.run_cli(
+                    "finish",
+                    "--state-dir",
+                    str(state_dir),
+                    "--native-workflow-complete",
+                )
 
                 if mode == "resume":
-                    self.run_cli(
+                    rejected = self.run_cli(
                         "resume",
                         "--state-dir",
                         str(state_dir),
                         "--segment-id",
                         "segment-1",
                         environment=environment,
+                        expected=2,
                     )
                 else:
-                    self.run_cli(
+                    rejected = self.run_cli(
                         "add-repair-segment",
                         "--state-dir",
                         str(state_dir),
@@ -657,16 +740,10 @@ class RunnerCliTests(unittest.TestCase):
                         "repair finding",
                         "--finding-id",
                         "F-1",
+                        expected=2,
                     )
 
-                rejected = self.run_cli(
-                    "cleanup",
-                    "--state-dir",
-                    str(state_dir),
-                    "--native-workflow-complete",
-                    expected=2,
-                )
-                self.assertIn(rejected["error"], {"finish_required", "segments_incomplete"})
+                self.assertEqual(rejected["error"], "work_unit_finished")
                 self.assertTrue(state_dir.exists())
 
 

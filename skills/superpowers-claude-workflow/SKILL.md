@@ -35,7 +35,7 @@ Before the Plan, read [executor-contract.md](references/executor-contract.md). B
 - Codex performs native Spec Review, Code Quality Review, Final Review, and verification.
 - Route a finding owned by one Segment back to that Segment Session. Create a Codex-defined Repair Segment for cross-Segment findings.
 - Preserve native Fix Loop rounds 1–5: resume for rounds 1–3; use a fresh Session for rounds 4–5 and upgrade `sonnet` to `opus`.
-- Runner `implementation_complete` is not native completion. Clean its UUID directory only after native finishing completes.
+- Runner `implementation_complete` is not native completion. After native Review, verification, and branch finishing, call `finish --native-workflow-complete` to enter `finished`, then clean its UUID directory.
 
 ## Common mistakes
 

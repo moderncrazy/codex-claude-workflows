@@ -37,7 +37,7 @@ Before routing, read [executor-contract.md](references/executor-contract.md) and
 
 ## Completion boundary
 
-Runner `implementation_complete` is not native completion. Native Review, verification, and commit requirements remain mandatory; configured Tracker transitions apply only to the Ticket path. Do not add a cross-Ticket Final Review or Verify Review. Clean the Runner UUID directory only after native completion.
+Runner `implementation_complete` is not native completion. Native Review, verification, and commit requirements remain mandatory; configured Tracker transitions apply only to the Ticket path. Do not add a cross-Ticket Final Review or Verify Review. After native completion, call `finish --native-workflow-complete` to enter `finished`, then clean the Runner UUID directory.
 
 ## Common mistakes
 

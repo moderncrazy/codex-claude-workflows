@@ -32,16 +32,16 @@ Model-idle, tool-idle, and Work Unit thresholds produce `timeout_suspected` only
 
 ## Permissions
 
-Injected `PermissionRequest` and `PermissionDenied` Hooks stop Claude outside the prompt and record the exact request. A structured `PERMISSION_REQUIRED` result enters the same pending broker contract. Apply [claude-permission-broker.md](claude-permission-broker.md), call `approve-permission` with one narrow rule, then `resume` the same Session. For `NEEDS_CONTEXT`, answer the exact request with bounded `resume --continuation-context`; never edit adapter state directly. A Hook/Reporter/state failure is a backend failure, never permission to continue.
+Injected `PermissionRequest` and `PermissionDenied` Hooks stop Claude outside the prompt and record the exact request. A structured `PERMISSION_REQUIRED` result enters the same pending broker contract. Apply [claude-permission-broker.md](claude-permission-broker.md), then resolve the request with `approve-permission`, `deny-permission`, or `dismiss-permission`. After any resolution, explicitly `resume` the same Session. For `NEEDS_CONTEXT` or a changed approach, supply bounded `resume --continuation-context`; never edit adapter state directly. A Hook/Reporter/state failure is a backend failure, never permission to continue.
 
 `--allowedTools` reduces prompts; it does not remove existing MCP tools. Managed denials still win.
 
 ## Results, Review, and cleanup
 
-Validate Session and structured result, then inspect the artifacts required by the Native Workflow. `record-verification` stores optional adapter evidence and a Progress Claim cannot satisfy native verification. The Native Workflow decides when verification is required. `finish` marks implementation handoff only: Runner `implementation_complete` is not native completion.
+Validate Session and structured result, then inspect the artifacts required by the Native Workflow. `record-verification` stores optional adapter evidence and a Progress Claim cannot satisfy native verification. The Native Workflow decides when verification is required. Runner `implementation_complete` is implementation handoff only, not native completion.
 
 For one-Segment findings, resume that Session. For cross-Segment findings, add a Repair Segment. Preserve native rounds and capability escalation.
 
 Malformed streams, wrong Session, missing final result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve the Work Unit and report it to the user. When evidence proves Claude rejected a Session before creating it, use `restart-segment-session` with the exact Segment and reason, then `run`; the abandoned Session remains recorded. Codex implementation requires an approved executor-contract change.
 
-After native Final Review, verification-before-completion, and branch finishing, call `cleanup --native-workflow-complete`. Cleanup removes exactly the owned UUID directory.
+After native Final Review, verification-before-completion, and branch finishing, call `finish --native-workflow-complete`. The resulting `finished` state records Codex's native-completion assertion. Then call `cleanup`; cleanup removes exactly the owned UUID directory and cannot substitute for finish.

@@ -16,8 +16,10 @@ Qualifying requests include:
 - a read-only MCP tool whose exact operation and data scope are already approved;
 - version/help probes for an approved executable.
 
-For an unfamiliar CLI or MCP tool, inspect its help, configuration, or authoritative description until its data scope and side effects are known. Approve the exact MCP tool or narrow action family. Re-pass the complete narrow allowlist on resume.
+For an unfamiliar CLI or MCP tool, inspect its help, configuration, or authoritative description until its data scope and side effects are known. Approve the exact MCP tool or narrow action family with `approve-permission`. Re-pass the complete narrow allowlist when you explicitly `resume` the same Session.
 
 Ask the user when the request reaches outside the repository/worktree or approved external data scope, performs an external write, requires installation, accesses new credentials or secrets, changes remote state, is destructive, broadens the work unit, or Codex cannot classify its effects. A managed denial ends permission handling.
+
+Resolve every pending request before resuming. Use `deny-permission` with the user's or policy's reason when the operation is rejected. Use `dismiss-permission` when this particular request is abandoned in favor of a safer approach without recording an allow rule or lasting denial rule. Approval, denial, and dismissal all leave the Work Unit interrupted; explicitly `resume` the same Session, with bounded continuation context when Claude must change approach.
 
 If the requested tool is unavailable to Claude Code, permission expansion cannot fix it. Codex may perform an equivalent read-only inspection and return only the result to the same Claude Session. Otherwise report a tool-availability backend failure. Codex implementation still requires an approved executor-contract change.

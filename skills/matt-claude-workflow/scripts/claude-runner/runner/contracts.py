@@ -19,11 +19,10 @@ class WorkUnitStatus(str, Enum):
     INITIALIZED = "initialized"
     RUNNING = "running"
     PERMISSION_REQUIRED = "permission_required"
-    TIMEOUT_SUSPECTED = "timeout_suspected"
     INTERRUPTED = "interrupted"
     BACKEND_FAILURE = "backend_failure"
     IMPLEMENTATION_COMPLETE = "implementation_complete"
-    CLEANED = "cleaned"
+    FINISHED = "finished"
 
 
 class SegmentStatus(str, Enum):
@@ -39,21 +38,18 @@ ALLOWED_TRANSITIONS = {
     WorkUnitStatus.INITIALIZED: {WorkUnitStatus.RUNNING, WorkUnitStatus.BACKEND_FAILURE},
     WorkUnitStatus.RUNNING: {
         WorkUnitStatus.PERMISSION_REQUIRED,
-        WorkUnitStatus.TIMEOUT_SUSPECTED,
         WorkUnitStatus.INTERRUPTED,
         WorkUnitStatus.BACKEND_FAILURE,
         WorkUnitStatus.IMPLEMENTATION_COMPLETE,
     },
-    WorkUnitStatus.PERMISSION_REQUIRED: {WorkUnitStatus.RUNNING, WorkUnitStatus.BACKEND_FAILURE},
-    WorkUnitStatus.TIMEOUT_SUSPECTED: {
-        WorkUnitStatus.RUNNING,
+    WorkUnitStatus.PERMISSION_REQUIRED: {
         WorkUnitStatus.INTERRUPTED,
         WorkUnitStatus.BACKEND_FAILURE,
     },
     WorkUnitStatus.INTERRUPTED: {WorkUnitStatus.RUNNING, WorkUnitStatus.BACKEND_FAILURE},
     WorkUnitStatus.BACKEND_FAILURE: {WorkUnitStatus.RUNNING},
-    WorkUnitStatus.IMPLEMENTATION_COMPLETE: {WorkUnitStatus.RUNNING, WorkUnitStatus.CLEANED},
-    WorkUnitStatus.CLEANED: set(),
+    WorkUnitStatus.IMPLEMENTATION_COMPLETE: {WorkUnitStatus.RUNNING, WorkUnitStatus.FINISHED},
+    WorkUnitStatus.FINISHED: set(),
 }
 
 TOP_LEVEL_FIELDS = {
@@ -76,7 +72,7 @@ TOP_LEVEL_FIELDS = {
 
 SEGMENT_FIELDS = {
     "segment_id", "kind", "scope", "verification_commands", "status", "session_id",
-    "attempt", "created_at", "started_at", "finished_at", "finding_ids", "capability",
+    "attempt", "resume_count", "created_at", "started_at", "finished_at", "finding_ids", "capability",
 }
 SEGMENT_REQUIRED = SEGMENT_FIELDS - {"finding_ids", "capability"}
 
@@ -85,6 +81,49 @@ def utc_now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def upgrade_state_dict(value: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ContractError("adapter state must be an object")
+    data = copy.deepcopy(dict(value))
+    version = data.get("schema_version")
+    if version == 2:
+        return data
+    if version != 1:
+        raise ContractError("unsupported schema_version")
+    try:
+        permissions = data["permissions"]
+        segments = data["segments"]
+        runtime = data["runtime"]
+        if not isinstance(permissions, dict) or not isinstance(segments, list) or not isinstance(runtime, dict):
+            raise ContractError("legacy adapter state has invalid nested fields")
+        data["schema_version"] = 2
+        permissions["resolved"] = []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                raise ContractError("legacy Segment must be an object")
+            segment["resume_count"] = 0
+            if segment.get("session_id") is not None and segment.get("attempt") == 0:
+                segment["attempt"] = 1
+        if data.get("status") == "timeout_suspected":
+            data["status"] = "running"
+        elif data.get("status") == "cleaned":
+            data["status"] = "finished"
+        pending = permissions.get("pending")
+        if pending is not None and "segment_id" not in pending:
+            candidates = [
+                segment["segment_id"]
+                for segment in segments
+                if segment.get("status") == "permission_required"
+            ]
+            if len(candidates) != 1:
+                raise ContractError("legacy pending permission does not identify one Segment")
+            pending["segment_id"] = candidates[0]
+        runtime.setdefault("result_history", [])
+    except KeyError as exc:
+        raise ContractError(f"legacy adapter state is missing {exc.args[0]}") from exc
+    return data
 
 
 @dataclass
@@ -120,7 +159,7 @@ class WorkUnitState:
             raise ContractError(f"unowned adapter-state fields: {sorted(unknown)}")
         if missing:
             raise ContractError(f"missing adapter-state fields: {sorted(missing)}")
-        if data["schema_version"] != 1:
+        if data["schema_version"] != 2:
             raise ContractError("unsupported schema_version")
         if data["workflow"] not in {"superpowers", "matt"}:
             raise ContractError("workflow must be superpowers or matt")
@@ -142,12 +181,18 @@ class WorkUnitState:
                 raise ContractError("segment_id values must be unique")
             identifiers.add(segment["segment_id"])
         permissions = data["permissions"]
-        if not isinstance(permissions, dict) or set(permissions) != {"initial", "approved", "pending"}:
-            raise ContractError("permissions must contain exactly initial, approved, and pending")
+        if not isinstance(permissions, dict) or set(permissions) != {"initial", "approved", "pending", "resolved"}:
+            raise ContractError("permissions must contain exactly initial, approved, pending, and resolved")
         if not isinstance(permissions["initial"], list) or not isinstance(permissions["approved"], list):
             raise ContractError("permission allowlists must be arrays")
+        if not isinstance(permissions["resolved"], list):
+            raise ContractError("resolved permissions must be an array")
         if permissions["pending"] is not None and not isinstance(permissions["pending"], dict):
             raise ContractError("pending permission must be an object or null")
+        if permissions["pending"] is not None:
+            segment_id = permissions["pending"].get("segment_id")
+            if not isinstance(segment_id, str) or segment_id not in identifiers:
+                raise ContractError("pending permission must identify an existing Segment")
         if not isinstance(data["runtime"], dict):
             raise ContractError("runtime must be an object")
         if not isinstance(data["progress_claims"], list) or not isinstance(data["commits"], list):
@@ -204,8 +249,9 @@ def _validate_segment(segment: object) -> None:
             uuid.UUID(str(segment["session_id"]))
         except ValueError as exc:
             raise ContractError("segment session_id must be a UUID or null") from exc
-    if not isinstance(segment["attempt"], int) or isinstance(segment["attempt"], bool) or segment["attempt"] < 0:
-        raise ContractError("segment attempt must be a non-negative integer")
+    for field in ("attempt", "resume_count"):
+        if not isinstance(segment[field], int) or isinstance(segment[field], bool) or segment[field] < 0:
+            raise ContractError(f"segment {field} must be a non-negative integer")
     for field in ("started_at", "finished_at"):
         if segment[field] is not None and not isinstance(segment[field], str):
             raise ContractError(f"{field} must be a string or null")

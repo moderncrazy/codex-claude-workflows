@@ -97,10 +97,17 @@ class NativeShapedWorkflowTests(unittest.TestCase):
         return entrypoint, Path(result["state_dir"])
 
     def verify_finish_cleanup(self, entrypoint: Path, state_dir: Path, root: Path) -> None:
-        self.call(entrypoint, "finish", "--state-dir", str(state_dir))
+        finished = self.call(
+            entrypoint,
+            "finish",
+            "--state-dir",
+            str(state_dir),
+            "--native-workflow-complete",
+        )
+        self.assertEqual(finished["status"], "finished")
         sibling = state_dir.parent / "must-survive"
         sibling.mkdir()
-        self.call(entrypoint, "cleanup", "--state-dir", str(state_dir), "--native-workflow-complete")
+        self.call(entrypoint, "cleanup", "--state-dir", str(state_dir))
         self.assertFalse(state_dir.exists())
         self.assertTrue(sibling.exists())
         self.assertEqual((root / "native-state.txt").read_text(), "owned by native workflow\n")
@@ -133,7 +140,8 @@ class NativeShapedWorkflowTests(unittest.TestCase):
             self.assertEqual(first["status"], "running")
             second = self.call(entrypoint, "run", "--state-dir", str(state_dir), scenario="success")
             self.assertEqual(second["status"], "implementation_complete")
-            self.assertEqual([segment["attempt"] for segment in second["segments"]], [2, 1])
+            self.assertEqual([segment["attempt"] for segment in second["segments"]], [1, 1])
+            self.assertEqual([segment["resume_count"] for segment in second["segments"]], [1, 0])
             self.assertNotEqual(second["segments"][0]["session_id"], second["segments"][1]["session_id"])
             self.verify_finish_cleanup(entrypoint, state_dir, root)
 

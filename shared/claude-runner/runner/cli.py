@@ -79,9 +79,12 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--segment-id")
         if name == "resume":
             command.add_argument("--continuation-context")
-    for name in ("status", "interrupt", "terminate", "finish"):
+    for name in ("status", "interrupt", "terminate"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", required=True, type=Path)
+    finish = commands.add_parser("finish")
+    finish.add_argument("--state-dir", required=True, type=Path)
+    finish.add_argument("--native-workflow-complete", action="store_true")
     wait = commands.add_parser("wait")
     wait.add_argument("--state-dir", required=True, type=Path)
     wait.add_argument("--after-sequence", type=int, default=0)
@@ -254,6 +257,8 @@ def _segment_verified(state: WorkUnitState, segment_id: str) -> bool:
 def _run(args: argparse.Namespace, *, resume: bool) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    if state.status == "finished":
+        raise CliError("work_unit_finished", "a finished Work Unit cannot be dispatched")
     if state.permissions["pending"] is not None:
         raise CliError("pending_permission", "approve or deny the pending permission before dispatch")
     if args.segment_id:
@@ -451,12 +456,17 @@ def _record_verification(args: argparse.Namespace) -> int:
 
 
 def _finish(args: argparse.Namespace) -> int:
+    if not args.native_workflow_complete:
+        raise CliError("native_completion_required", "finish requires Codex's native workflow completion assertion")
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
+        if state.permissions["pending"] is not None:
+            raise CliError("pending_permission", "resolve the pending permission before finish")
         if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all Execution Segments must be complete")
-        state.runtime["implementation_handoff_at"] = utc_now()
+        state.transition_to(WorkUnitStatus.FINISHED)
+        state.runtime["finished_at"] = utc_now()
 
     try:
         with inactive_lease_guard(store.state_dir):
@@ -468,26 +478,21 @@ def _finish(args: argparse.Namespace) -> int:
 
 
 def _cleanup(args: argparse.Namespace) -> int:
-    if not args.native_workflow_complete:
-        raise CliError("native_completion_required", "cleanup requires Codex's native workflow completion assertion")
     supplied = args.state_dir.absolute()
     if supplied.is_symlink():
         raise CliError("unsafe_cleanup_target", "state directory must not be a symlink")
     store = StateStore(supplied)
-    def mark_cleaned(state: WorkUnitState) -> None:
-        if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
-            raise CliError("segments_incomplete", "all Execution Segments must be complete before cleanup")
-        if not state.runtime.get("implementation_handoff_at"):
-            raise CliError("finish_required", "finish must precede cleanup")
+    def validate_cleanup(state: WorkUnitState) -> None:
+        if state.status != "finished":
+            raise CliError("finish_required", "finish must record native completion before cleanup")
         root = Path(state.working_root).resolve()
         expected = root / ".tmp" / "codex-claude-workflows" / state.work_unit_id
         if supplied.resolve() != expected or supplied.name != state.work_unit_id:
             raise CliError("unsafe_cleanup_target", "state directory is outside the owned Work Unit path")
-        state.transition_to(WorkUnitStatus.CLEANED)
 
     try:
         with inactive_lease_guard(store.state_dir):
-            state = store.update(mark_cleaned)
+            state = store.update(validate_cleanup)
     except ActiveRunError as exc:
         raise CliError("active_process", "cannot clean an active Work Unit") from exc
     shutil.rmtree(supplied)
@@ -511,6 +516,8 @@ def _add_repair(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
+        if state.status == "finished":
+            raise CliError("work_unit_finished", "a finished Work Unit cannot add a Repair Segment")
         if any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all existing Segments must be complete before a Repair Segment")
         if state.status == "implementation_complete":
@@ -546,6 +553,8 @@ def _add_repair(args: argparse.Namespace) -> int:
 def _restart_segment_session(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    if state.status == "finished":
+        raise CliError("work_unit_finished", "a finished Work Unit cannot restart a Session")
     if state.status != "backend_failure":
         raise CliError("backend_failure_required", "only a backend-failed Work Unit can restart a Session")
     if active_lease_held(store.state_dir):
@@ -590,6 +599,14 @@ def _control(args: argparse.Namespace, action: str) -> int:
         def fail(current: WorkUnitState) -> None:
             if current.status in {"running", "interrupted"}:
                 current.transition_to(WorkUnitStatus.BACKEND_FAILURE)
+            for segment in current.segments:
+                if segment["status"] == "running":
+                    segment["status"] = "failed"
+                    segment["finished_at"] = utc_now()
+            current.data["result"] = None
+            current.runtime["active_run"] = None
+            current.runtime["pid"] = None
+            current.runtime["process_group_id"] = None
             current.runtime["backend_failure"] = {
                 "message": "unsafe or stale Runner process identity",
                 "recorded_at": utc_now(),
@@ -613,7 +630,7 @@ def _wait(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
     after = args.after_sequence
     started = time.monotonic()
-    terminal = {"permission_required", "backend_failure", "implementation_complete", "interrupted", "cleaned"}
+    terminal = {"permission_required", "backend_failure", "implementation_complete", "interrupted", "finished"}
     while True:
         state = store.load()
         for event in state.runtime.get("runner_events", []):

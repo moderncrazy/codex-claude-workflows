@@ -82,7 +82,11 @@ def handle_permission_request(state_dir: Path, source: TextIO | None = None, sin
             pending = state.permissions["pending"]
             if pending is not None:
                 raise InvalidTransition("a permission request is already pending")
+            candidates = [segment for segment in state.segments if segment["status"] == "running"]
+            if len(candidates) != 1:
+                raise InvalidTransition("permission request does not identify one running Segment")
             state.permissions["pending"] = {
+                "segment_id": candidates[0]["segment_id"],
                 "request": request,
                 "tool_name": request.get("tool_name"),
                 "tool_input": request.get("tool_input"),

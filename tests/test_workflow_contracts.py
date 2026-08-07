@@ -214,6 +214,20 @@ class ClaudeExecutionProtocolTests(unittest.TestCase):
             self.assertIn("unavailable to Claude Code", broker)
             self.assertNotIn("Obtain user approval or stop", protocol)
 
+    def test_permission_requests_can_be_approved_denied_or_dismissed(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            protocol = (
+                ROOT
+                / "skills"
+                / skill
+                / "references"
+                / "claude-execution-protocol.md"
+            ).read_text()
+            self.assertIn("`approve-permission`", protocol)
+            self.assertIn("`deny-permission`", protocol)
+            self.assertIn("`dismiss-permission`", protocol)
+            self.assertIn("explicitly `resume`", protocol)
+
     def test_codex_escalates_only_side_effectful_or_ambiguous_permissions(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
             broker = self.load_permission_broker(skill)
@@ -302,6 +316,20 @@ class RunnerWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn("native two-axis codex review", matt)
         self.assertIn("tracker", matt)
         self.assertIn("do not add a cross-ticket final review or verify review", matt)
+
+    def test_runner_finishes_only_after_native_completion(self):
+        for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):
+            combined = "\n".join(
+                path.read_text().lower()
+                for path in (ROOT / "skills" / skill).rglob("*.md")
+            )
+            self.assertIn("finish --native-workflow-complete", combined)
+            self.assertIn("`finished`", combined)
+            self.assertIn("cleanup", combined)
+            self.assertLess(
+                combined.index("implementation_complete"),
+                combined.index("finish --native-workflow-complete"),
+            )
 
     def test_sequential_native_work_may_overlap_files(self):
         for skill in ("superpowers-claude-workflow", "matt-claude-workflow"):

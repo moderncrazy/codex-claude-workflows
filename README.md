@@ -89,7 +89,7 @@ Use `opus` for material architecture, consistency, concurrency, security, migrat
 
 ## Runner behavior
 
-The packaged entry point exposes `init`, `run`, `resume`, `restart-segment-session`, `status`, `wait`, `approve-permission`, `extend`, `interrupt`, `terminate`, optional evidence recording through `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. Runner evidence never gates native Review, repair, verification, or completion. `restart-segment-session` is restricted to backend-failed, inactive Work Units and preserves the abandoned Session record. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
+The packaged entry point exposes `init`, `run`, `resume`, `restart-segment-session`, `status`, `wait`, `approve-permission`, `deny-permission`, `dismiss-permission`, `extend`, `interrupt`, `terminate`, optional evidence recording through `record-verification`, `add-repair-segment`, `finish`, and `cleanup`. Runner evidence never gates native Review, repair, verification, or completion. `restart-segment-session` is restricted to backend-failed, inactive Work Units and preserves the abandoned Session record. Run `python3 scripts/claude-runner/claude_runner.py --help` inside either installed Skill for exact flags.
 
 Claude runs non-interactively with `stream-json`. The Runner appends a local progress MCP server without strict MCP replacement, so user-configured tools such as CodeGraph remain available. Unknown tool events are stored exactly and remain opaque.
 
@@ -113,6 +113,8 @@ The Runner injects per-invocation Claude permission Hooks. A Hook request is rec
 
 The Codex permission broker automatically approves repository-scoped, task-relevant read-only built-ins, narrow CLI inspections, exact read-only MCP operations, and version/help probes. It adds one narrow rule and resumes without interrupting the user. It asks the user for side effects, external scope/writes, installation, credentials, remote changes, destructive actions, scope expansion, or ambiguous effects.
 
+Codex may approve, deny, or dismiss a pending permission. Every resolution is audited, clears the pending request, and leaves the Work Unit interrupted until Codex explicitly resumes the same Session.
+
 Never broadly allow an interpreter, shell, package installation, network access, push, deployment, history rewriting, or Agent delegation. Managed denials win.
 
 CLI absence, authentication/quota/service errors, malformed stream/Hook/Reporter/state, wrong Session, unsafe process identity, or failed resume are reported as backend failures. Codex never silently takes over implementation; changing executor requires updated native state and approval.
@@ -122,10 +124,10 @@ CLI absence, authentication/quota/service errors, malformed stream/Hook/Reporter
 Runner `implementation_complete` means implementation handoff only. It does not replace Superpowers Review/finishing or Matt Review/Tracker completion. Only after native completion may Codex call:
 
 ```text
-cleanup --native-workflow-complete
+finish --native-workflow-complete
 ```
 
-Cleanup validates the repository root, UUID, real path, symlink boundary, and inactive process before removing exactly that Work Unit directory.
+This transitions the Work Unit to `finished`. Codex then calls `cleanup`, which requires `finished` and validates the repository root, UUID, real path, symlink boundary, and inactive process before removing exactly that Work Unit directory.
 
 ## Development and validation
 

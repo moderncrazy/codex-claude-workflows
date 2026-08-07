@@ -79,9 +79,12 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--segment-id")
         if name == "resume":
             command.add_argument("--continuation-context")
-    for name in ("status", "interrupt", "terminate", "finish"):
+    for name in ("status", "interrupt", "terminate"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", required=True, type=Path)
+    finish = commands.add_parser("finish")
+    finish.add_argument("--state-dir", required=True, type=Path)
+    finish.add_argument("--native-workflow-complete", action="store_true")
     wait = commands.add_parser("wait")
     wait.add_argument("--state-dir", required=True, type=Path)
     wait.add_argument("--after-sequence", type=int, default=0)
@@ -92,6 +95,12 @@ def parser() -> argparse.ArgumentParser:
     approve.add_argument("--state-dir", required=True, type=Path)
     approve.add_argument("--expected-tool-name", required=True)
     approve.add_argument("--allow-rule", required=True)
+
+    for name in ("deny-permission", "dismiss-permission"):
+        resolution = commands.add_parser(name)
+        resolution.add_argument("--state-dir", required=True, type=Path)
+        resolution.add_argument("--expected-tool-name", required=True)
+        resolution.add_argument("--reason", required=True)
 
     extend = commands.add_parser("extend")
     extend.add_argument("--state-dir", required=True, type=Path)
@@ -170,6 +179,7 @@ def _segments(value: str) -> list[dict[str, object]]:
                 "status": "pending",
                 "session_id": None,
                 "attempt": 0,
+                "resume_count": 0,
                 "created_at": now,
                 "started_at": None,
                 "finished_at": None,
@@ -206,11 +216,12 @@ def _init(args: argparse.Namespace) -> int:
                 "heartbeat_seconds": args.heartbeat_seconds,
                 "termination_grace_seconds": args.termination_grace_seconds,
             },
-        }
+        },
+        "result_history": [],
     }
     state = WorkUnitState.from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "work_unit_id": work_unit_id,
             "workflow": args.workflow,
             "native_ref": args.native_ref,
@@ -219,7 +230,7 @@ def _init(args: argparse.Namespace) -> int:
             "executor": {"agent": "claude-code", "capability": args.capability},
             "status": "initialized",
             "segments": _segments(args.segments_json),
-            "permissions": {"initial": list(args.allowed_tool), "approved": [], "pending": None},
+            "permissions": {"initial": list(args.allowed_tool), "approved": [], "pending": None, "resolved": []},
             "runtime": runtime,
             "progress_claims": [],
             "evidence": {"declared": [], "verified": []},
@@ -246,6 +257,8 @@ def _segment_verified(state: WorkUnitState, segment_id: str) -> bool:
 def _run(args: argparse.Namespace, *, resume: bool) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    if state.status == "finished":
+        raise CliError("work_unit_finished", "a finished Work Unit cannot be dispatched")
     if state.permissions["pending"] is not None:
         raise CliError("pending_permission", "approve or deny the pending permission before dispatch")
     if args.segment_id:
@@ -335,22 +348,78 @@ def _run(args: argparse.Namespace, *, resume: bool) -> int:
     return code
 
 
-def _approve(args: argparse.Namespace) -> int:
-    store = StateStore(args.state_dir)
-
+def _resolve_permission(
+    store: StateStore,
+    *,
+    expected_tool_name: str,
+    resolution: str,
+    reason: str | None,
+    allow_rule: str | None,
+) -> None:
     def mutate(state: WorkUnitState) -> None:
         pending = state.permissions["pending"]
         if pending is None:
-            raise CliError("no_pending_permission", "there is no permission request to approve")
-        if pending.get("tool_name") != args.expected_tool_name:
+            raise CliError("no_pending_permission", "there is no permission request to resolve")
+        if pending.get("tool_name") != expected_tool_name:
             raise CliError("permission_mismatch", "pending tool does not match expected-tool-name")
-        state.permissions["approved"].append(
-            {"rule": args.allow_rule, "approved_at": utc_now(), "request": pending["request"]}
+        segment = next(
+            (item for item in state.segments if item["segment_id"] == pending["segment_id"]),
+            None,
+        )
+        if segment is None:
+            raise CliError("unknown_segment", str(pending["segment_id"]))
+        resolved_at = utc_now()
+        if resolution == "approved":
+            assert allow_rule is not None
+            state.permissions["approved"].append(
+                {"rule": allow_rule, "approved_at": resolved_at, "request": pending["request"]}
+            )
+        state.permissions["resolved"].append(
+            {
+                "resolution": resolution,
+                "reason": reason,
+                "rule": allow_rule,
+                "segment_id": segment["segment_id"],
+                "request": pending["request"],
+                "resolved_at": resolved_at,
+            }
         )
         state.permissions["pending"] = None
-        state.transition_to(WorkUnitStatus.RUNNING)
+        segment["status"] = "interrupted"
+        segment["finished_at"] = None
+        state.transition_to(WorkUnitStatus.INTERRUPTED)
 
-    store.update(mutate)
+    try:
+        with inactive_lease_guard(store.state_dir):
+            store.update(mutate)
+    except ActiveRunError as exc:
+        raise CliError("active_process", "cannot resolve permission while the Runner is active") from exc
+
+
+def _approve(args: argparse.Namespace) -> int:
+    store = StateStore(args.state_dir)
+    _resolve_permission(
+        store,
+        expected_tool_name=args.expected_tool_name,
+        resolution="approved",
+        reason=None,
+        allow_rule=args.allow_rule,
+    )
+
+    _emit(_state_summary(store))
+    return 0
+
+
+def _reject_permission(args: argparse.Namespace, resolution: str) -> int:
+    store = StateStore(args.state_dir)
+    _resolve_permission(
+        store,
+        expected_tool_name=args.expected_tool_name,
+        resolution=resolution,
+        reason=args.reason,
+        allow_rule=None,
+    )
+
     _emit(_state_summary(store))
     return 0
 
@@ -387,12 +456,17 @@ def _record_verification(args: argparse.Namespace) -> int:
 
 
 def _finish(args: argparse.Namespace) -> int:
+    if not args.native_workflow_complete:
+        raise CliError("native_completion_required", "finish requires Codex's native workflow completion assertion")
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
+        if state.permissions["pending"] is not None:
+            raise CliError("pending_permission", "resolve the pending permission before finish")
         if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all Execution Segments must be complete")
-        state.runtime["implementation_handoff_at"] = utc_now()
+        state.transition_to(WorkUnitStatus.FINISHED)
+        state.runtime["finished_at"] = utc_now()
 
     try:
         with inactive_lease_guard(store.state_dir):
@@ -404,26 +478,21 @@ def _finish(args: argparse.Namespace) -> int:
 
 
 def _cleanup(args: argparse.Namespace) -> int:
-    if not args.native_workflow_complete:
-        raise CliError("native_completion_required", "cleanup requires Codex's native workflow completion assertion")
     supplied = args.state_dir.absolute()
     if supplied.is_symlink():
         raise CliError("unsafe_cleanup_target", "state directory must not be a symlink")
     store = StateStore(supplied)
-    def mark_cleaned(state: WorkUnitState) -> None:
-        if state.status != "implementation_complete" or any(segment["status"] != "complete" for segment in state.segments):
-            raise CliError("segments_incomplete", "all Execution Segments must be complete before cleanup")
-        if not state.runtime.get("implementation_handoff_at"):
-            raise CliError("finish_required", "finish must precede cleanup")
+    def validate_cleanup(state: WorkUnitState) -> None:
+        if state.status != "finished":
+            raise CliError("finish_required", "finish must record native completion before cleanup")
         root = Path(state.working_root).resolve()
         expected = root / ".tmp" / "codex-claude-workflows" / state.work_unit_id
         if supplied.resolve() != expected or supplied.name != state.work_unit_id:
             raise CliError("unsafe_cleanup_target", "state directory is outside the owned Work Unit path")
-        state.transition_to(WorkUnitStatus.CLEANED)
 
     try:
         with inactive_lease_guard(store.state_dir):
-            state = store.update(mark_cleaned)
+            state = store.update(validate_cleanup)
     except ActiveRunError as exc:
         raise CliError("active_process", "cannot clean an active Work Unit") from exc
     shutil.rmtree(supplied)
@@ -438,9 +507,6 @@ def _extend(args: argparse.Namespace) -> int:
     def mutate(state: WorkUnitState) -> None:
         state.runtime["configuration"]["thresholds"][key] = args.seconds
         state.runtime.setdefault("timeout_extensions", []).append({"clock": args.clock, "seconds": args.seconds, "at": utc_now()})
-        if state.status == "timeout_suspected":
-            state.transition_to(WorkUnitStatus.RUNNING)
-
     store.update(mutate)
     _emit(_state_summary(store))
     return 0
@@ -450,6 +516,8 @@ def _add_repair(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
 
     def mutate(state: WorkUnitState) -> None:
+        if state.status == "finished":
+            raise CliError("work_unit_finished", "a finished Work Unit cannot add a Repair Segment")
         if any(segment["status"] != "complete" for segment in state.segments):
             raise CliError("segments_incomplete", "all existing Segments must be complete before a Repair Segment")
         if state.status == "implementation_complete":
@@ -466,6 +534,7 @@ def _add_repair(args: argparse.Namespace) -> int:
                 "status": "pending",
                 "session_id": None,
                 "attempt": 0,
+                "resume_count": 0,
                 "created_at": utc_now(),
                 "started_at": None,
                 "finished_at": None,
@@ -484,6 +553,8 @@ def _add_repair(args: argparse.Namespace) -> int:
 def _restart_segment_session(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    if state.status == "finished":
+        raise CliError("work_unit_finished", "a finished Work Unit cannot restart a Session")
     if state.status != "backend_failure":
         raise CliError("backend_failure_required", "only a backend-failed Work Unit can restart a Session")
     if active_lease_held(store.state_dir):
@@ -526,10 +597,16 @@ def _control(args: argparse.Namespace, action: str) -> int:
     active = state.runtime.get("active_run")
     if not isinstance(active, dict) or not active_lease_held(store.state_dir):
         def fail(current: WorkUnitState) -> None:
-            if current.status in {"running", "timeout_suspected", "interrupted"}:
-                if current.status == "timeout_suspected":
-                    current.transition_to(WorkUnitStatus.RUNNING)
+            if current.status in {"running", "interrupted"}:
                 current.transition_to(WorkUnitStatus.BACKEND_FAILURE)
+            for segment in current.segments:
+                if segment["status"] == "running":
+                    segment["status"] = "failed"
+                    segment["finished_at"] = utc_now()
+            current.data["result"] = None
+            current.runtime["active_run"] = None
+            current.runtime["pid"] = None
+            current.runtime["process_group_id"] = None
             current.runtime["backend_failure"] = {
                 "message": "unsafe or stale Runner process identity",
                 "recorded_at": utc_now(),
@@ -553,7 +630,7 @@ def _wait(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
     after = args.after_sequence
     started = time.monotonic()
-    terminal = {"permission_required", "backend_failure", "implementation_complete", "interrupted", "cleaned"}
+    terminal = {"permission_required", "backend_failure", "implementation_complete", "interrupted", "finished"}
     while True:
         state = store.load()
         for event in state.runtime.get("runner_events", []):
@@ -585,6 +662,10 @@ def main(argv: list[str] | None = None) -> int:
             return _wait(args)
         if args.command == "approve-permission":
             return _approve(args)
+        if args.command == "deny-permission":
+            return _reject_permission(args, "denied")
+        if args.command == "dismiss-permission":
+            return _reject_permission(args, "dismissed")
         if args.command == "extend":
             return _extend(args)
         if args.command == "record-verification":

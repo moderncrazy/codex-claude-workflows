@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Literal
 
-from .contracts import InvalidTransition, ProgressReceipt, WorkUnitState, utc_now
+from .contracts import InvalidTransition, ProgressReceipt, WorkUnitState, upgrade_state_dict, utc_now
 
 
 class StateStore:
@@ -106,7 +106,7 @@ class StateStore:
 
     def load(self) -> WorkUnitState:
         with self.state_path.open(encoding="utf-8") as handle:
-            return WorkUnitState.from_dict(json.load(handle))
+            return WorkUnitState.from_dict(upgrade_state_dict(json.load(handle)))
 
     def update(self, mutation: Callable[[WorkUnitState], None]) -> WorkUnitState:
         with self._exclusive_lock():
