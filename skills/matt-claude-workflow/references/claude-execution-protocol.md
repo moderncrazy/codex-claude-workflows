@@ -4,7 +4,7 @@
 
 Run the packaged `scripts/claude-runner/claude_runner.py` from the trusted Matt repository/worktree. Require Python 3, Claude Code, an existing tracked `/.tmp/` ignore rule, and the native Review fixed point. `sonnet` and `opus` are capability aliases; do not inspect the provider model.
 
-One Ticket or implicit task owns one temporary Work Unit. Only `work-unit.json`, `raw-events.jsonl`, and `raw-stderr.log` persist under `.tmp/codex-claude-workflows/<uuid>/`. Tracker and conversation state remain authoritative.
+Each native implementation work unit dispatched to Claude owns one temporary Runner Work Unit. Only `work-unit.json`, `raw-events.jsonl`, and `raw-stderr.log` persist under `.tmp/codex-claude-workflows/<uuid>/`. The state selected by the native workflow remains authoritative.
 
 ## Dispatch
 
@@ -44,4 +44,4 @@ When the Native Workflow routes a finding back to implementation, resume its own
 
 Malformed streams, wrong Session, missing result, failed resume, CLI/authentication/quota/service failure, or unsafe process identity become `backend_failure`. Preserve state and report it to the user. When evidence proves Claude rejected a Session before creating it, use `restart-segment-session` with the exact Segment and reason, then `run`; the abandoned Session remains recorded. Do not silently implement with Codex.
 
-After accepted native Review, verification, commit evidence, and Tracker/implicit-task completion, call `finish --native-workflow-complete`. The resulting `finished` state records Codex's native-completion assertion. Then call `cleanup`; cleanup removes exactly the owned UUID directory and cannot substitute for finish.
+After accepted native Review, verification, commit evidence, and native workflow completion, call `finish --native-workflow-complete`. The resulting `finished` state records Codex's native-completion assertion. Then call `cleanup`; cleanup removes exactly the owned UUID directory and cannot substitute for finish.

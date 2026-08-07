@@ -103,11 +103,10 @@ class MattLifecycleTests(unittest.TestCase):
             self.assertNotIn(invasive_policy, (skill + text).lower())
 
     def test_wrapper_delegates_routing_tracer_and_tracker_policy_to_native_matt(self):
-        skill = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text().lower()
-        lifecycle = (
-            ROOT / "skills/matt-claude-workflow/references/matt-lifecycle-adapter.md"
-        ).read_text().lower()
-        text = skill + lifecycle
+        matt_skill = ROOT / "skills/matt-claude-workflow"
+        policy_paths = [matt_skill / "SKILL.md", *sorted((matt_skill / "references").glob("*.md"))]
+        policy_text = {path.name: path.read_text().lower() for path in policy_paths}
+        text = "\n".join(policy_text.values())
 
         self.assertIn("native matt skills choose", text)
         self.assertIn("tracker prerequisites", text)
@@ -118,8 +117,15 @@ class MattLifecycleTests(unittest.TestCase):
             "tracker setup only for the spec/ticket path",
             "cross-session work or multiple tracer bullets",
             "without reading or changing a tracker",
+            "single-session native matt implement call",
+            "one ticket or implicit task owns one temporary work unit",
+            "ticket or implicit-task implementer",
+            "tracker/implicit-task completion",
         ):
             self.assertNotIn(wrapper_policy, text)
+
+        for reference in ("executor-contract.md", "claude-execution-protocol.md"):
+            self.assertIn("native implementation work unit", policy_text[reference])
 
     def test_matt_review_continuation_routes_without_new_adapter_gate(self):
         protocol = (
