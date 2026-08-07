@@ -12,12 +12,8 @@ Use this adapter only to reconcile native `implement` review-before-commit order
 6. After native Review is accepted, commit the accepted working-tree changes to the current branch as required by native `implement`, and record the resulting SHA as native completion evidence. If any implementation file changes after the accepted Review, repeat Review before committing. Do not push, merge, amend, rebase, reset, or tag.
 7. Complete according to native `implement` and `code-review`; create no empty post-Review commit.
 
-## Ticket path
+## Native Tracker boundary
 
-Read `docs/agents/issue-tracker.md`. Apply a claim, status change, comment, close operation, blocker query, or frontier action only when that operation is explicitly defined by the configured Tracker and selected by the Native Workflow. Keep the configured Tracker as the only Ticket ledger.
+Follow the selected native workflow and its configured Tracker instructions unchanged. This adapter neither requires nor suppresses Tracker setup, chooses a Ticket path, decomposes tracer bullets, nor invents Tracker operations. Read or change Tracker state only when the native workflow requires that operation.
 
-Do not add a cross-Ticket Final Review or Verify Review. Runner `implementation_complete` never changes Ticket state. Clean its Work Unit only after native Ticket completion.
-
-## Implicit-task lifecycle
-
-Use the common implementation path without reading or changing a Tracker. Do not create or update a Ticket.
+Do not add a cross-Ticket Final Review or Verify Review.

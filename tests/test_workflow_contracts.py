@@ -102,9 +102,24 @@ class MattLifecycleTests(unittest.TestCase):
         ):
             self.assertNotIn(invasive_policy, (skill + text).lower())
 
-    def test_implicit_task_does_not_require_tracker_setup(self):
+    def test_wrapper_delegates_routing_tracer_and_tracker_policy_to_native_matt(self):
         skill = (ROOT / "skills/matt-claude-workflow/SKILL.md").read_text().lower()
-        self.assertIn("tracker setup only for the spec/ticket path", skill)
+        lifecycle = (
+            ROOT / "skills/matt-claude-workflow/references/matt-lifecycle-adapter.md"
+        ).read_text().lower()
+        text = skill + lifecycle
+
+        self.assertIn("native matt skills choose", text)
+        self.assertIn("tracker prerequisites", text)
+        self.assertIn("tracer-bullet decomposition", text)
+        self.assertIn("after the native workflow identifies", text)
+        for wrapper_policy in (
+            "choose scale",
+            "tracker setup only for the spec/ticket path",
+            "cross-session work or multiple tracer bullets",
+            "without reading or changing a tracker",
+        ):
+            self.assertNotIn(wrapper_policy, text)
 
     def test_matt_review_continuation_routes_without_new_adapter_gate(self):
         protocol = (
