@@ -286,14 +286,14 @@ class Supervisor:
             self.control_applied = "interrupt"
             self.control_stage = "interrupt"
             self._record_control_request("interrupt", "interrupt")
-            self._signal(signal.SIGINT)
-            self.control_deadline = now + self.termination_grace_seconds
+            if self._signal_control_stage(signal.SIGINT):
+                self.control_deadline = time.monotonic() + self.termination_grace_seconds
         if self.terminate_requested and self.control_applied is None:
             self.control_applied = "terminate"
             self.control_stage = "terminate"
             self._record_control_request("terminate", "terminate")
-            self._signal(signal.SIGTERM)
-            self.control_deadline = now + self.termination_grace_seconds
+            if self._signal_control_stage(signal.SIGTERM):
+                self.control_deadline = time.monotonic() + self.termination_grace_seconds
         if (
             self.control_deadline is not None
             and now >= self.control_deadline
@@ -303,12 +303,14 @@ class Supervisor:
             if self.control_stage == "interrupt":
                 self.control_stage = "terminate"
                 self._record_control_stage("terminate")
-                self._signal(signal.SIGTERM)
-                self.control_deadline = now + self.termination_grace_seconds
+                if self._signal_control_stage(signal.SIGTERM):
+                    self.control_deadline = time.monotonic() + self.termination_grace_seconds
+                else:
+                    self.control_deadline = None
             elif self.control_stage == "terminate":
                 self.control_stage = "kill"
                 self._record_control_stage("kill")
-                self._signal(signal.SIGKILL)
+                self._signal_control_stage(signal.SIGKILL)
                 self.control_deadline = None
 
     def _record_control_request(self, action: str, stage: str) -> None:
@@ -680,3 +682,10 @@ class Supervisor:
             self.process.send_signal(sig)
         else:
             os.killpg(self.process.pid, sig)
+
+    def _signal_control_stage(self, sig: signal.Signals) -> bool:
+        try:
+            self._signal(sig)
+        except (ProcessLookupError, RuntimeError):
+            return False
+        return True

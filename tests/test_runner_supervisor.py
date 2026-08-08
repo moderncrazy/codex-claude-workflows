@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import tempfile
 import threading
@@ -346,6 +347,89 @@ class SupervisorTests(unittest.TestCase):
                 [item["stage"] for item in state.runtime["control_requested"]["stages"]],
                 ["interrupt", "terminate", "kill"],
             )
+
+    def test_process_exit_during_stage_persistence_finishes_interrupt(self) -> None:
+        class ExitingDuringStagePersistenceSupervisor(Supervisor):
+            def _record_control_stage(self, stage: str) -> None:
+                if stage == "terminate":
+                    assert self.process is not None
+                    self.process.kill()
+                    self.process.wait(timeout=1)
+                super()._record_control_stage(stage)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store, original, events = self.make_supervisor(
+                Path(directory),
+                "ignore-interrupt-and-term",
+            )
+            supervisor = ExitingDuringStagePersistenceSupervisor(
+                store,
+                original.invocation,
+                environment=original.environment,
+                termination_grace_seconds=0.02,
+            )
+
+            def request_interrupt(event: dict[str, object]) -> None:
+                events.append(event)
+                if event["kind"] == "tool_started":
+                    supervisor.interrupt()
+
+            supervisor.event_sink = request_interrupt
+
+            try:
+                result = supervisor.run()
+            except (ProcessLookupError, RuntimeError) as exc:
+                self.fail(f"process disappearance escaped interrupt finalization: {exc}")
+
+            state = store.load()
+            self.assertNotEqual(result, 0)
+            self.assertEqual(state.status, "interrupted")
+            self.assertEqual(state.segments[0]["status"], "interrupted")
+            self.assertIsNone(supervisor.process)
+
+    def test_interrupt_grace_deadline_starts_after_signal(self) -> None:
+        class SlowPersistenceSupervisor(Supervisor):
+            def __init__(self, *args: object, **kwargs: object):
+                super().__init__(*args, **kwargs)
+                self.signal_times: list[tuple[signal.Signals, float]] = []
+
+            def _record_control_request(self, action: str, stage: str) -> None:
+                super()._record_control_request(action, stage)
+                time.sleep(0.08)
+
+            def _signal(self, sig: signal.Signals) -> None:
+                self.signal_times.append((sig, time.monotonic()))
+                super()._signal(sig)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store, original, events = self.make_supervisor(
+                Path(directory),
+                "ignore-interrupt-and-term",
+            )
+            original.environment["FAKE_CLAUDE_DELAY"] = "5"
+            supervisor = SlowPersistenceSupervisor(
+                store,
+                original.invocation,
+                environment=original.environment,
+                termination_grace_seconds=0.05,
+            )
+
+            def request_interrupt(event: dict[str, object]) -> None:
+                events.append(event)
+                if event["kind"] == "tool_started":
+                    supervisor.interrupt()
+
+            supervisor.event_sink = request_interrupt
+
+            self.assertNotEqual(supervisor.run(), 0)
+
+            self.assertEqual(
+                [sig for sig, _ in supervisor.signal_times],
+                [signal.SIGINT, signal.SIGTERM, signal.SIGKILL],
+            )
+            interrupt_at = supervisor.signal_times[0][1]
+            terminate_at = supervisor.signal_times[1][1]
+            self.assertGreaterEqual(terminate_at - interrupt_at, 0.045)
 
     def test_explicit_terminate_escalates_after_grace_without_pid_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
