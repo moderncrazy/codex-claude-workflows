@@ -318,6 +318,35 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(store.load().status, "interrupted")
             self.assertEqual(store.load().segments[0]["status"], "interrupted")
 
+    def test_interrupt_escalates_twice_for_unresponsive_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, events = self.make_supervisor(
+                Path(directory),
+                "ignore-interrupt-and-term",
+                termination_grace_seconds=0.05,
+            )
+            supervisor.environment["FAKE_CLAUDE_DELAY"] = "5"
+
+            def request_interrupt(event: dict[str, object]) -> None:
+                events.append(event)
+                if event["kind"] == "tool_started":
+                    supervisor.interrupt()
+
+            supervisor.event_sink = request_interrupt
+
+            started = time.monotonic()
+            self.assertNotEqual(supervisor.run(), 0)
+            elapsed = time.monotonic() - started
+
+            state = store.load()
+            self.assertLess(elapsed, 2)
+            self.assertEqual(state.status, "interrupted")
+            self.assertEqual(state.segments[0]["status"], "interrupted")
+            self.assertEqual(
+                [item["stage"] for item in state.runtime["control_requested"]["stages"]],
+                ["interrupt", "terminate", "kill"],
+            )
+
     def test_explicit_terminate_escalates_after_grace_without_pid_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store, supervisor, events = self.make_supervisor(

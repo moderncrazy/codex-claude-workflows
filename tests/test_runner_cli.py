@@ -57,7 +57,13 @@ class RunnerCliTests(unittest.TestCase):
         self.assertTrue(completed.stdout.strip(), completed.stderr)
         return json.loads(completed.stdout.strip().splitlines()[-1])
 
-    def init_work_unit(self, root: Path, work_unit_id: str) -> Path:
+    def init_work_unit(
+        self,
+        root: Path,
+        work_unit_id: str,
+        *,
+        termination_grace_seconds: float | None = None,
+    ) -> Path:
         segments = [
             {
                 "segment_id": "segment-1",
@@ -66,7 +72,7 @@ class RunnerCliTests(unittest.TestCase):
                 "verification_commands": ["python3 -m unittest"],
             }
         ]
-        result = self.run_cli(
+        arguments = [
             "init",
             "--working-root",
             str(root),
@@ -90,7 +96,12 @@ class RunnerCliTests(unittest.TestCase):
             json.dumps(segments),
             "--work-unit-id",
             work_unit_id,
-        )
+        ]
+        if termination_grace_seconds is not None:
+            arguments.extend(
+                ["--termination-grace-seconds", str(termination_grace_seconds)]
+            )
+        result = self.run_cli(*arguments)
         self.assertEqual(result["status"], "initialized")
         return Path(result["state_dir"])
 
@@ -710,6 +721,68 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(resumed["status"], "implementation_complete")
             recovered_state = json.loads(state_path.read_text())
             self.assertNotIn("control_requested", recovered_state["runtime"])
+
+    def test_interrupt_escalates_and_preserves_same_session_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(
+                root,
+                "cde4388b-0051-43c6-a632-09acf7181ee8",
+                termination_grace_seconds=0.05,
+            )
+            state_path = state_dir / "work-unit.json"
+            environment = dict(
+                os.environ,
+                FAKE_CLAUDE_SCENARIO="ignore-interrupt-and-term",
+                FAKE_CLAUDE_DELAY="5",
+            )
+            running = subprocess.Popen(
+                [sys.executable, str(ENTRYPOINT), "run", "--state-dir", str(state_dir)],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.addCleanup(lambda: running.poll() is None and running.kill())
+            for _ in range(100):
+                state = json.loads(state_path.read_text())
+                if state["runtime"].get("active_run", {}).get("identity"):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("Runner never started its Claude process")
+
+            started = time.monotonic()
+            control = self.run_cli("interrupt", "--state-dir", str(state_dir))
+            stdout, stderr = running.communicate(timeout=6)
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(control["control"], "interrupt")
+            self.assertNotEqual(running.returncode, 0, stderr + stdout)
+            self.assertLess(elapsed, 2)
+            interrupted_state = json.loads(state_path.read_text())
+            self.assertEqual(interrupted_state["status"], "interrupted")
+            self.assertEqual(interrupted_state["segments"][0]["status"], "interrupted")
+            self.assertEqual(
+                [
+                    item["stage"]
+                    for item in interrupted_state["runtime"]["control_requested"]["stages"]
+                ],
+                ["interrupt", "terminate", "kill"],
+            )
+            session_id = interrupted_state["segments"][0]["session_id"]
+
+            resumed = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+            self.assertEqual(resumed["status"], "implementation_complete")
+            recovered_state = json.loads(state_path.read_text())
+            self.assertEqual(recovered_state["segments"][0]["session_id"], session_id)
+            self.assertEqual(recovered_state["segments"][0]["resume_count"], 1)
 
     def test_stale_control_identity_fails_running_segment_and_clears_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

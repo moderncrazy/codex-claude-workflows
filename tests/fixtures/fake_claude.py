@@ -28,6 +28,9 @@ def main() -> int:
     scenario = os.environ.get("FAKE_CLAUDE_SCENARIO", "success")
     if scenario == "ignore-term":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    elif scenario == "ignore-interrupt-and-term":
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     session_id = option("--session-id") or option("--resume") or "missing"
     if scenario == "wrong-session":
         session_id = "00000000-0000-4000-8000-000000000000"
@@ -86,6 +89,9 @@ def main() -> int:
         return 3
     elif scenario == "ignore-term":
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
+        time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
+    elif scenario == "ignore-interrupt-and-term":
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_interrupt_ready", "name": "Bash", "input": {}}]}})
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
 
     prompt = sys.argv[-1]

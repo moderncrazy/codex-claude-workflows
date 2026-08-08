@@ -155,7 +155,8 @@ class Supervisor:
         self.interrupt_requested = False
         self.terminate_requested = False
         self.control_applied: str | None = None
-        self.terminate_deadline: float | None = None
+        self.control_stage: str | None = None
+        self.control_deadline: float | None = None
 
     def _emit(self, kind: str, **fields: object) -> None:
         saved: dict[str, object] | None = None
@@ -283,26 +284,53 @@ class Supervisor:
     def _apply_control_requests(self, now: float) -> None:
         if self.interrupt_requested and self.control_applied is None:
             self.control_applied = "interrupt"
-            self._record_control_request("interrupt")
+            self.control_stage = "interrupt"
+            self._record_control_request("interrupt", "interrupt")
             self._signal(signal.SIGINT)
+            self.control_deadline = now + self.termination_grace_seconds
         if self.terminate_requested and self.control_applied is None:
             self.control_applied = "terminate"
-            self._record_control_request("terminate")
+            self.control_stage = "terminate"
+            self._record_control_request("terminate", "terminate")
             self._signal(signal.SIGTERM)
-            self.terminate_deadline = now + self.termination_grace_seconds
+            self.control_deadline = now + self.termination_grace_seconds
         if (
-            self.control_applied == "terminate"
-            and self.terminate_deadline is not None
-            and now >= self.terminate_deadline
+            self.control_deadline is not None
+            and now >= self.control_deadline
             and self.process is not None
             and self.process.poll() is None
         ):
-            self._signal(signal.SIGKILL)
-            self.terminate_deadline = None
+            if self.control_stage == "interrupt":
+                self.control_stage = "terminate"
+                self._record_control_stage("terminate")
+                self._signal(signal.SIGTERM)
+                self.control_deadline = now + self.termination_grace_seconds
+            elif self.control_stage == "terminate":
+                self.control_stage = "kill"
+                self._record_control_stage("kill")
+                self._signal(signal.SIGKILL)
+                self.control_deadline = None
 
-    def _record_control_request(self, action: str) -> None:
+    def _record_control_request(self, action: str, stage: str) -> None:
         def mutate(state: object) -> None:
-            state.runtime["control_requested"] = {"action": action, "requested_at": utc_now()}
+            started_at = utc_now()
+            state.runtime["control_requested"] = {
+                "action": action,
+                "requested_at": started_at,
+                "stage": stage,
+                "stage_started_at": started_at,
+                "stages": [{"stage": stage, "started_at": started_at}],
+            }
+
+        self.store.update(mutate)
+
+    def _record_control_stage(self, stage: str) -> None:
+        def mutate(state: object) -> None:
+            started_at = utc_now()
+            control = state.runtime["control_requested"]
+            control["stage"] = stage
+            control["stage_started_at"] = started_at
+            control["stages"].append({"stage": stage, "started_at": started_at})
 
         self.store.update(mutate)
 
