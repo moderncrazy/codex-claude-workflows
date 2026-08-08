@@ -887,6 +887,42 @@ class RunnerCliTests(unittest.TestCase):
             self.assertIsNone(failed["result"])
             self.assertIsNone(failed["runtime"]["active_run"])
 
+    def test_duplicate_control_preserves_an_interrupted_terminal_state(self) -> None:
+        for action, active_run in (
+            ("interrupt", None),
+            (
+                "terminate",
+                {
+                    "launch_token": "stale",
+                    "controller_pid": 999999,
+                    "identity": {"pid": 999999},
+                    "reserved_at": "2026-08-07T00:00:00Z",
+                },
+            ),
+        ):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = self.make_repo(directory)
+                state_dir = self.init_work_unit(
+                    root,
+                    f"d114ccd7-ec64-45aa-89f0-9671af4f20{1 if action == 'interrupt' else 2:02d}",
+                )
+                state_path = state_dir / "work-unit.json"
+                state = json.loads(state_path.read_text())
+                state["status"] = "interrupted"
+                state["segments"][0]["status"] = "interrupted"
+                state["segments"][0]["session_id"] = "3c79ef47-d311-4cbe-8bcb-8bb84c780361"
+                state["segments"][0]["attempt"] = 1
+                state["runtime"]["active_run"] = active_run
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+
+                result = self.run_cli(action, "--state-dir", str(state_dir))
+
+                self.assertEqual(result["control"], action)
+                preserved = json.loads(state_path.read_text())
+                self.assertEqual(preserved["status"], "interrupted")
+                self.assertEqual(preserved["segments"][0]["status"], "interrupted")
+                self.assertNotIn("backend_failure", preserved["runtime"])
+
     def test_finished_work_unit_rejects_reopen_and_repair(self) -> None:
         for mode in ("resume", "repair"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:

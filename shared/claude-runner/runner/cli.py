@@ -575,10 +575,13 @@ def _restart_segment_session(args: argparse.Namespace) -> int:
 def _control(args: argparse.Namespace, action: str) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    if state.status == "interrupted":
+        _emit({"work_unit_id": state.work_unit_id, "status": state.status, "control": action})
+        return 0
     active = state.runtime.get("active_run")
     if not isinstance(active, dict) or not active_lease_held(store.state_dir):
         def fail(current: WorkUnitState) -> None:
-            if current.status in {"running", "interrupted"}:
+            if current.status == "running":
                 current.transition_to(WorkUnitStatus.BACKEND_FAILURE)
             for segment in current.segments:
                 if segment["status"] == "running":
