@@ -255,3 +255,98 @@ git commit -m "chore: sync reliable runner controls"
 ```
 
 Finally review the full implementation commit range against the design and confirm no native Matt or Superpowers workflow logic changed.
+
+---
+
+### Task 4: Route structured stream permission denials
+
+**Files:**
+- Modify: `tests/test_runner_stream_capture.py`
+- Modify: `tests/fixtures/fake_claude.py`
+- Modify: `tests/test_runner_supervisor.py`
+- Modify: `tests/test_runner_cli.py`
+- Modify: `shared/claude-runner/runner/stream_capture.py`
+- Modify: `shared/claude-runner/runner/permission_hooks.py`
+- Modify: `shared/claude-runner/runner/supervisor.py`
+
+**Interfaces:**
+- Consumes: structured `tool_use` and `system.permission_denied` stream events, plus the existing pending-permission mutation and bounded interrupt state machine.
+- Produces: exact `tool_use_id` correlation and one pending broker request without relying on a Hook callback or natural-language parsing.
+
+- [ ] **Step 1: Write all failing tests before production changes**
+
+Add a stream-capture test with a Bash `tool_use` whose ID is `toolu_denied` and input is `{"command": "git add .permission-probe"}`, followed by the exact real event shape:
+
+```python
+{
+    "type": "system",
+    "subtype": "permission_denied",
+    "tool_name": "Bash",
+    "tool_use_id": "toolu_denied",
+    "decision_reason_type": "other",
+    "decision_reason": "This command requires approval",
+    "message": "This command requires approval",
+    "session_id": SESSION_ID,
+}
+```
+
+Assert correlation preserves the verbatim denial event, tool name, and full
+tool input. Add unknown-ID and tool-name-mismatch cases that raise
+`StreamProtocolError`.
+
+Add fake-Claude scenario `stream-permission-denied` that emits the complete
+tool call and denial event without invoking Hooks, then remains alive long
+enough for the Supervisor to stop it. Add Supervisor and public CLI tests
+requiring exact pending state, bounded stop, `permission_required`, dismissal,
+and same-Session resume.
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+  tests.test_runner_stream_capture \
+  tests.test_runner_supervisor.SupervisorTests.test_stream_permission_denial_is_brokered_and_stopped \
+  tests.test_runner_cli.RunnerCliTests.test_stream_permission_denial_can_be_dismissed_then_same_session_resumed -v
+```
+
+Expected: current parser does not correlate the denial, so no pending request
+is created and the invocation does not reach the required lifecycle.
+
+- [ ] **Step 3: Implement the minimal structured-event path**
+
+Store tool name/input by tool-use ID inside `StreamObservation`. On the exact
+system subtype, require a matching saved call and expose one internal denial
+record. Refactor the pending mutation in `permission_hooks.py` into a reusable
+function that accepts the verbatim request plus explicit tool name/input.
+
+In Supervisor, atomically persist the first correlated denial, initiate the
+existing bounded interrupt stages, and make pending-permission finalization
+take precedence over the internal control marker. Clear internal control state
+when entering `permission_required`. Do not surface tool input in ordinary
+semantic runner events.
+
+- [ ] **Step 4: Verify GREEN and regressions**
+
+Run the Step 2 command, then:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+  tests.test_runner_permission_hooks \
+  tests.test_runner_stream_capture \
+  tests.test_runner_supervisor \
+  tests.test_runner_cli -v
+```
+
+Expected: all selected tests pass, including Hook compatibility, interrupt
+escalation, dismissal, and same-Session recovery.
+
+- [ ] **Step 5: Inspect and commit**
+
+```bash
+git diff --check
+git add shared/claude-runner/runner/stream_capture.py shared/claude-runner/runner/permission_hooks.py shared/claude-runner/runner/supervisor.py tests/test_runner_stream_capture.py tests/fixtures/fake_claude.py tests/test_runner_supervisor.py tests/test_runner_cli.py
+git commit -m "fix: broker structured Claude permission denials"
+```
+
+After task review passes, return to Task 3, resynchronize both packaged Runner
+trees, and repeat the real Claude permission and interrupt regressions.

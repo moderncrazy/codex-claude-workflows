@@ -61,6 +61,38 @@ contracts.
 No `PreToolUse` Hook is added. This preserves Claude's native permission path
 and the existing two-Hook integration boundary.
 
+#### Real-backend correction: structured stream denial is authoritative
+
+Real Claude Code 2.1.222 regression showed that a denied tool emits a
+structured stream event but does not invoke the configured
+`PermissionDenied` Hook:
+
+```json
+{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_...","decision_reason":"This command requires approval","session_id":"..."}
+```
+
+The Hook handler remains as a compatibility path, but the Runner must also
+consume this structured event. This is protocol parsing, not natural-language
+interpretation.
+
+`StreamObservation` will retain each preceding tool call by `tool_use_id`,
+including its exact `tool_name` and complete `tool_input`. When the system
+denial arrives, it must correlate the ID and produce one internal denial
+record containing the verbatim system event plus the saved tool input. The
+stream-facing semantic event may expose only the tool name and ID; exact tool
+input remains in raw capture and permission state.
+
+The Supervisor atomically writes the correlated denial through the same
+pending-permission mutation used by Hooks, then starts bounded interrupt
+escalation so Claude cannot keep trying alternatives. On child exit, pending
+permission takes precedence over the internal interrupt marker and the Work
+Unit enters `permission_required`.
+
+If `tool_use_id` is missing, unknown, duplicated ambiguously, or names a
+different tool than the denial event, the Runner fails closed as a stream
+protocol/backend failure. It never guesses the input or extracts a command
+from `message` or `decision_reason`.
+
 ### 2. Give `interrupt` bounded, staged escalation
 
 An interrupt request will apply these stages to the validated Runner-owned
@@ -122,6 +154,14 @@ Add a fake-Claude end-to-end scenario that invokes the installed
 Also cover fail-closed behavior for duplicate pending permissions and for the
 absence of one unique running Segment.
 
+Add the exact real stream shape to parser, Supervisor, and CLI tests. The fake
+Claude stream must emit a complete `tool_use` followed by
+`system.permission_denied` without calling either Hook. Before the fix the
+invocation must fail to enter pending state. After the fix it must stop,
+persist the exact correlated input, enter `permission_required`, resolve via
+deny/dismiss, and resume the same Session. Unknown or mismatched tool IDs must
+be protocol failures.
+
 ### Interrupt RED/GREEN
 
 Add a fake Claude scenario that ignores both `SIGINT` and `SIGTERM`. Invoke
@@ -156,6 +196,9 @@ and are removed after evidence is summarized.
 
 - A real `PermissionDenied` Hook request becomes the single pending permission
   for its running Segment without natural-language parsing.
+- A real structured `system.permission_denied` stream event becomes the same
+  pending permission by exact `tool_use_id` correlation, even when Claude Code
+  does not invoke the Hook.
 - `approve-permission`, `deny-permission`, and `dismiss-permission` can resolve
   that request and explicit resume reuses the same Claude Session.
 - Claude cannot continue trying alternate tools after a pending permission has
