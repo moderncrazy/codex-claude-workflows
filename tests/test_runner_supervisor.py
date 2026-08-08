@@ -246,6 +246,17 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(store.load().permissions["pending"]["tool_name"], "Bash")
             self.assertEqual(store.load().segments[0]["status"], "permission_required")
 
+    def test_permission_denied_hook_stop_is_brokered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, _ = self.make_supervisor(Path(directory), "permission-denied")
+
+            self.assertNotEqual(supervisor.run(), 0)
+
+            state = store.load()
+            self.assertEqual(state.status, "permission_required")
+            self.assertEqual(state.segments[0]["status"], "permission_required")
+            self.assertEqual(state.permissions["pending"]["tool_input"], {"command": "git status --short"})
+
     def test_supervisor_refuses_dispatch_while_permission_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store, supervisor, _ = self.make_supervisor(Path(directory), "success")

@@ -65,16 +65,22 @@ class PermissionHookTests(unittest.TestCase):
             self.assertFalse(json.loads(output.getvalue())["continue"])
             self.assertEqual(store.load().permissions["pending"]["request"], first)
 
-    def test_permission_denied_and_malformed_input_fail_closed(self) -> None:
+    def test_permission_denied_is_recorded_verbatim_then_stops(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store = StateStore.create(sample_work_unit(Path(directory)))
+            store = self.running_store(Path(directory))
+            request = {
+                "session_id": "2b30da4c-4a0b-4d77-a5d9-75c785218daf",
+                "cwd": "/repo",
+                "hook_event_name": "PermissionDenied",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git status --short"},
+            }
             denied = io.StringIO()
-            malformed = io.StringIO()
 
             self.assertEqual(
                 handle_permission_denied(
                     store.state_dir,
-                    io.StringIO(json.dumps({"hook_event_name": "PermissionDenied", "tool_name": "Bash"})),
+                    io.StringIO(json.dumps(request)),
                     denied,
                 ),
                 0,
@@ -87,6 +93,46 @@ class PermissionHookTests(unittest.TestCase):
                     "suppressOutput": True,
                 },
             )
+            pending = store.load().permissions["pending"]
+            self.assertEqual(pending["segment_id"], "segment-1")
+            self.assertEqual(pending["request"], request)
+            self.assertEqual(pending["tool_name"], "Bash")
+            self.assertEqual(pending["tool_input"], {"command": "git status --short"})
+
+    def test_second_permission_denial_cannot_overwrite_pending_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.running_store(Path(directory))
+            first = {"hook_event_name": "PermissionDenied", "tool_name": "Bash", "tool_input": {"command": "git status --short"}}
+            second = {"hook_event_name": "PermissionDenied", "tool_name": "Bash", "tool_input": {"command": "git push"}}
+            handle_permission_denied(store.state_dir, io.StringIO(json.dumps(first)), io.StringIO())
+
+            output = io.StringIO()
+            code = handle_permission_denied(store.state_dir, io.StringIO(json.dumps(second)), output)
+
+            self.assertNotEqual(code, 0)
+            self.assertFalse(json.loads(output.getvalue())["continue"])
+            self.assertEqual(store.load().permissions["pending"]["request"], first)
+
+    def test_permission_denied_without_one_running_segment_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore.create(sample_work_unit(Path(directory)))
+            output = io.StringIO()
+
+            code = handle_permission_denied(
+                store.state_dir,
+                io.StringIO(json.dumps({"hook_event_name": "PermissionDenied", "tool_name": "Bash"})),
+                output,
+            )
+
+            self.assertNotEqual(code, 0)
+            self.assertFalse(json.loads(output.getvalue())["continue"])
+            self.assertIsNone(store.load().permissions["pending"])
+
+    def test_malformed_permission_request_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore.create(sample_work_unit(Path(directory)))
+            malformed = io.StringIO()
+
             self.assertNotEqual(handle_permission_request(store.state_dir, io.StringIO("nope"), malformed), 0)
             self.assertFalse(json.loads(malformed.getvalue())["continue"])
 

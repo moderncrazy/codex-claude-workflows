@@ -405,6 +405,43 @@ class RunnerCliTests(unittest.TestCase):
                 self.assertEqual(resumed["segments"][0]["session_id"], session_id)
                 self.assertEqual(resumed["status"], "implementation_complete")
 
+    def test_permission_denied_can_be_dismissed_then_same_session_resumed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "4b7baf0c-fc31-46cc-8c16-73c90ace7429")
+            stopped = self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="permission-denied"),
+                expected=3,
+            )
+            session_id = stopped["segments"][0]["session_id"]
+            self.assertEqual(stopped["permissions"]["pending"]["tool_input"], {"command": "git status --short"})
+
+            dismissed = self.run_cli(
+                "dismiss-permission",
+                "--state-dir",
+                str(state_dir),
+                "--expected-tool-name",
+                "Bash",
+                "--reason",
+                "use the approved command",
+            )
+            self.assertIsNone(dismissed["permissions"]["pending"])
+            self.assertEqual(dismissed["permissions"]["resolved"][-1]["resolution"], "dismissed")
+
+            resumed = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+            self.assertEqual(resumed["status"], "implementation_complete")
+            self.assertEqual(resumed["segments"][0]["session_id"], session_id)
+            self.assertEqual(resumed["segments"][0]["attempt"], 1)
+            self.assertEqual(resumed["segments"][0]["resume_count"], 1)
+
     def test_permission_resolution_errors_leave_state_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)

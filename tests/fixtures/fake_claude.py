@@ -72,6 +72,18 @@ def main() -> int:
         }
         subprocess.run(shlex.split(command), input=json.dumps(request).encode(), stdout=subprocess.PIPE, check=False)
         return 3
+    elif scenario == "permission-denied":
+        settings = json.loads(option("--settings") or "{}")
+        command = settings["hooks"]["PermissionDenied"][0]["hooks"][0]["command"]
+        request = {
+            "session_id": session_id,
+            "cwd": os.getcwd(),
+            "hook_event_name": "PermissionDenied",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git status --short"},
+        }
+        subprocess.run(shlex.split(command), input=json.dumps(request).encode(), stdout=subprocess.PIPE, check=False)
+        return 3
     elif scenario == "ignore-term":
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
