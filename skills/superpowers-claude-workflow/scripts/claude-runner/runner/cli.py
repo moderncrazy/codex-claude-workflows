@@ -579,6 +579,13 @@ def _restart_segment_session(args: argparse.Namespace) -> int:
 def _control(args: argparse.Namespace, action: str) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
+    terminal_statuses = {
+        "permission_required",
+        "backend_failure",
+        "implementation_complete",
+        "interrupted",
+        "finished",
+    }
     if state.status == "interrupted":
         deadline = time.monotonic() + CONTROL_RESERVATION_WAIT_SECONDS
         while active_lease_held(store.state_dir):
@@ -596,9 +603,15 @@ def _control(args: argparse.Namespace, action: str) -> int:
             return 0
     active = state.runtime.get("active_run")
     if not isinstance(active, dict) or not active_lease_held(store.state_dir):
+        failed_running_state = False
+
         def fail(current: WorkUnitState) -> None:
+            nonlocal failed_running_state
+            if current.status in terminal_statuses:
+                return
             if current.status == "running":
                 current.transition_to(WorkUnitStatus.BACKEND_FAILURE)
+                failed_running_state = True
             for segment in current.segments:
                 if segment["status"] == "running":
                     segment["status"] = "failed"
@@ -612,7 +625,10 @@ def _control(args: argparse.Namespace, action: str) -> int:
                 "recorded_at": utc_now(),
             }
 
-        store.update(fail)
+        state = store.update(fail)
+        if state.status in terminal_statuses and not failed_running_state:
+            _emit({"work_unit_id": state.work_unit_id, "status": state.status, "control": action})
+            return 0
         raise CliError("unsafe_process_identity", "no validated Runner-owned process identity")
     controller_pid = active.get("controller_pid")
     if not isinstance(controller_pid, int):

@@ -33,6 +33,8 @@ class StreamObservation:
         for block in _content_blocks(event):
             if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
                 tool_id = block["id"]
+                if tool_id in self.tool_calls:
+                    raise StreamProtocolError("stream-json contained a duplicate tool_use_id")
                 self.open_tools[tool_id] = now
                 self.tool_calls[tool_id] = {
                     "tool_name": block.get("name"),
