@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Literal, Mapping, Sequence
 
 from .contracts import ContractError, WorkUnitStatus, utc_now, validate_json_schema
+from .permission_hooks import record_pending_permission
 from .state_store import StateStore
 from .stream_capture import StreamObservation, StreamProtocolError
 
@@ -405,6 +406,7 @@ class Supervisor:
         started = last_event = time.monotonic()
         next_heartbeat = started + self.heartbeat_seconds
         observation = StreamObservation()
+        permission_denial_handled = False
         stdout_buffer = b""
         protocol_error: str | None = None
         timeout_keys: set[str] = set()
@@ -451,6 +453,10 @@ class Supervisor:
                     try:
                         for event in observation.observe_line(line_with_newline, last_event):
                             self._emit(**event)
+                        if observation.permission_denial is not None and not permission_denial_handled:
+                            self._broker_stream_permission_denial(observation.permission_denial)
+                            permission_denial_handled = True
+                            self.interrupt()
                     except StreamProtocolError as exc:
                         protocol_error = str(exc)
                     if timeout_keys:
@@ -465,12 +471,12 @@ class Supervisor:
         if stdout_buffer and protocol_error is None:
             protocol_error = "unterminated stream-json output"
         state = self.store.load()
+        if state.permissions["pending"] is not None:
+            self._permission_required(return_code)
+            return 3
         if state.runtime.get("control_requested") is not None:
             self._interrupted(return_code)
             return return_code or 130
-        if state.permissions["pending"] is not None:
-            self._permission_required(return_code)
-            return return_code or 3
         if protocol_error is not None:
             self._backend_failure(protocol_error)
             return return_code or 1
@@ -568,13 +574,31 @@ class Supervisor:
 
         self.store.update(mutate)
 
+    def _broker_stream_permission_denial(self, denial: dict[str, object]) -> None:
+        def mutate(state: object) -> None:
+            if state.permissions["pending"] is None:
+                record_pending_permission(
+                    state,
+                    denial["request"],
+                    tool_name=denial["tool_name"],
+                    tool_input=denial["tool_input"],
+                )
+
+        self.store.update(mutate)
+
     def _permission_required(self, return_code: int) -> None:
         def mutate(state: object) -> None:
             state.transition_to(WorkUnitStatus.PERMISSION_REQUIRED)
             state.runtime["last_exit_code"] = return_code
+            state.runtime.pop("control_requested", None)
             self._finish_invocation_state(state, "permission_required")
 
         self.store.update(mutate)
+        self.interrupt_requested = False
+        self.terminate_requested = False
+        self.control_applied = None
+        self.control_stage = None
+        self.control_deadline = None
         self._emit("permission_required", exit_code=return_code)
 
     def _interrupted(self, return_code: int) -> None:

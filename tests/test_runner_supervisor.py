@@ -258,6 +258,47 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(state.segments[0]["status"], "permission_required")
             self.assertEqual(state.permissions["pending"]["tool_input"], {"command": "git status --short"})
 
+    def test_stream_permission_denial_is_brokered_and_stopped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, events = self.make_supervisor(
+                Path(directory),
+                "stream-permission-denied",
+                termination_grace_seconds=0.05,
+            )
+            supervisor.environment["FAKE_CLAUDE_DELAY"] = "5"
+
+            started = time.monotonic()
+            self.assertEqual(supervisor.run(), 3)
+            elapsed = time.monotonic() - started
+
+            state = store.load()
+            denial = {
+                "type": "system",
+                "subtype": "permission_denied",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_denied",
+                "decision_reason_type": "other",
+                "decision_reason": "This command requires approval",
+                "message": "This command requires approval",
+                "session_id": SESSION_ID,
+            }
+            self.assertLess(elapsed, 2)
+            self.assertEqual(state.status, "permission_required")
+            self.assertEqual(state.segments[0]["status"], "permission_required")
+            self.assertEqual(
+                state.permissions["pending"],
+                {
+                    "segment_id": "segment-1",
+                    "request": denial,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git add .permission-probe"},
+                    "received_at": state.permissions["pending"]["received_at"],
+                },
+            )
+            self.assertNotIn("control_requested", state.runtime)
+            self.assertNotIn("git add .permission-probe", json.dumps(events))
+            self.assertTrue(any(event["kind"] == "permission_required" for event in events))
+
     def test_supervisor_refuses_dispatch_while_permission_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store, supervisor, _ = self.make_supervisor(Path(directory), "success")

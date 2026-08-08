@@ -28,7 +28,7 @@ def main() -> int:
     scenario = os.environ.get("FAKE_CLAUDE_SCENARIO", "success")
     if scenario == "ignore-term":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    elif scenario == "ignore-interrupt-and-term":
+    elif scenario in {"ignore-interrupt-and-term", "stream-permission-denied"}:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     session_id = option("--session-id") or option("--resume") or "missing"
@@ -87,6 +87,36 @@ def main() -> int:
         }
         subprocess.run(shlex.split(command), input=json.dumps(request).encode(), stdout=subprocess.PIPE, check=False)
         return 3
+    elif scenario == "stream-permission-denied":
+        emit(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_denied",
+                            "name": "Bash",
+                            "input": {"command": "git add .permission-probe"},
+                        }
+                    ]
+                },
+                "session_id": session_id,
+            }
+        )
+        emit(
+            {
+                "type": "system",
+                "subtype": "permission_denied",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_denied",
+                "decision_reason_type": "other",
+                "decision_reason": "This command requires approval",
+                "message": "This command requires approval",
+                "session_id": session_id,
+            }
+        )
+        time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
     elif scenario == "ignore-term":
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))

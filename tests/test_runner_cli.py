@@ -453,6 +453,76 @@ class RunnerCliTests(unittest.TestCase):
             self.assertEqual(resumed["segments"][0]["attempt"], 1)
             self.assertEqual(resumed["segments"][0]["resume_count"], 1)
 
+    def test_stream_permission_denial_can_be_dismissed_then_same_session_resumed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(
+                root,
+                "80c071a7-bf97-40fe-9b66-8bb26151cc5c",
+                termination_grace_seconds=0.05,
+            )
+            started = time.monotonic()
+            stopped = self.run_cli(
+                "run",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(
+                    os.environ,
+                    FAKE_CLAUDE_SCENARIO="stream-permission-denied",
+                    FAKE_CLAUDE_DELAY="5",
+                ),
+                expected=3,
+            )
+            elapsed = time.monotonic() - started
+            session_id = stopped["segments"][0]["session_id"]
+            denial = {
+                "type": "system",
+                "subtype": "permission_denied",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_denied",
+                "decision_reason_type": "other",
+                "decision_reason": "This command requires approval",
+                "message": "This command requires approval",
+                "session_id": session_id,
+            }
+
+            self.assertLess(elapsed, 2)
+            self.assertEqual(stopped["status"], "permission_required")
+            self.assertEqual(stopped["segments"][0]["status"], "permission_required")
+            self.assertEqual(stopped["permissions"]["pending"]["request"], denial)
+            self.assertEqual(stopped["permissions"]["pending"]["tool_name"], "Bash")
+            self.assertEqual(
+                stopped["permissions"]["pending"]["tool_input"],
+                {"command": "git add .permission-probe"},
+            )
+
+            dismissed = self.run_cli(
+                "dismiss-permission",
+                "--state-dir",
+                str(state_dir),
+                "--expected-tool-name",
+                "Bash",
+                "--reason",
+                "leave the permission probe unstaged",
+            )
+            self.assertEqual(dismissed["status"], "interrupted")
+            self.assertIsNone(dismissed["permissions"]["pending"])
+            self.assertEqual(
+                dismissed["permissions"]["resolved"][-1]["resolution"],
+                "dismissed",
+            )
+
+            resumed = self.run_cli(
+                "resume",
+                "--state-dir",
+                str(state_dir),
+                environment=dict(os.environ, FAKE_CLAUDE_SCENARIO="success"),
+            )
+            self.assertEqual(resumed["status"], "implementation_complete")
+            self.assertEqual(resumed["segments"][0]["session_id"], session_id)
+            self.assertEqual(resumed["segments"][0]["attempt"], 1)
+            self.assertEqual(resumed["segments"][0]["resume_count"], 1)
+
     def test_permission_resolution_errors_leave_state_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_repo(directory)
