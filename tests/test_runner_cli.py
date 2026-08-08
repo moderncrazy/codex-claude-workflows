@@ -989,6 +989,105 @@ sys.exit(7)
             self.assertEqual(holder.returncode, 0, stderr + stdout)
             self.assertNotIn("UNCONTROLLED", stdout)
 
+    @unittest.skipIf(os.name == "nt", "POSIX lease timing regression")
+    def test_control_preserves_terminal_state_reached_during_resume_publication(self) -> None:
+        for terminal_status in ("implementation_complete", "permission_required"):
+            with self.subTest(terminal_status=terminal_status), tempfile.TemporaryDirectory() as directory:
+                root = self.make_repo(directory)
+                state_dir = self.init_work_unit(
+                    root,
+                    f"684cd125-b470-451f-ae17-f9c133916d{1 if terminal_status == 'implementation_complete' else 2:02d}",
+                )
+                state_path = state_dir / "work-unit.json"
+                state = json.loads(state_path.read_text())
+                state["status"] = "interrupted"
+                state["segments"][0]["status"] = "interrupted"
+                state["segments"][0]["session_id"] = "0b3575b0-2adb-4ee1-b617-9e021074792d"
+                state["segments"][0]["attempt"] = 1
+                state["runtime"]["active_run"] = None
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+                holder_script = """
+import fcntl
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from runner.contracts import WorkUnitStatus, utc_now
+from runner.state_store import StateStore
+
+store = StateStore(Path(sys.argv[2]))
+terminal_status = sys.argv[3]
+descriptor = os.open(store.state_dir / "raw-events.jsonl", os.O_RDWR)
+fcntl.flock(descriptor, fcntl.LOCK_EX)
+print("LEASED", flush=True)
+time.sleep(0.05)
+
+def finish(state):
+    state.transition_to(WorkUnitStatus.RUNNING)
+    state.segments[0]["status"] = "running"
+    state.transition_to(WorkUnitStatus(terminal_status))
+    state.segments[0]["status"] = (
+        "complete" if terminal_status == "implementation_complete" else "permission_required"
+    )
+    state.segments[0]["finished_at"] = utc_now()
+    state.runtime["active_run"] = None
+    if terminal_status == "implementation_complete":
+        state.data["result"] = {"status": "DONE", "summary": "authoritative result"}
+    else:
+        state.permissions["pending"] = {
+            "segment_id": state.segments[0]["segment_id"],
+            "request": {"type": "system", "subtype": "permission_denied"},
+            "tool_name": "Bash",
+            "tool_input": {"command": "git add owned.txt"},
+            "received_at": utc_now(),
+        }
+
+store.update(finish)
+print("TERMINAL", flush=True)
+time.sleep(0.3)
+fcntl.flock(descriptor, fcntl.LOCK_UN)
+os.close(descriptor)
+"""
+                holder = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        holder_script,
+                        str(RUNNER_ROOT),
+                        str(state_dir),
+                        terminal_status,
+                    ],
+                    cwd=REPO_ROOT,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.addCleanup(lambda: holder.poll() is None and holder.kill())
+                assert holder.stdout is not None
+                self.assertEqual(holder.stdout.readline().strip(), "LEASED")
+
+                control = self.run_cli("interrupt", "--state-dir", str(state_dir))
+                stdout, stderr = holder.communicate(timeout=2)
+
+                self.assertEqual(control["control"], "interrupt")
+                self.assertEqual(control["status"], terminal_status)
+                self.assertEqual(holder.returncode, 0, stderr + stdout)
+                preserved = json.loads(state_path.read_text())
+                self.assertEqual(preserved["status"], terminal_status)
+                self.assertNotIn("backend_failure", preserved["runtime"])
+                if terminal_status == "implementation_complete":
+                    self.assertEqual(
+                        preserved["result"],
+                        {"status": "DONE", "summary": "authoritative result"},
+                    )
+                else:
+                    self.assertEqual(
+                        preserved["permissions"]["pending"]["tool_input"],
+                        {"command": "git add owned.txt"},
+                    )
+
     def test_finished_work_unit_rejects_reopen_and_repair(self) -> None:
         for mode in ("resume", "repair"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
