@@ -26,6 +26,10 @@ from .supervisor import (
 )
 
 
+CONTROL_RESERVATION_WAIT_SECONDS = 1.0
+CONTROL_RESERVATION_POLL_SECONDS = 0.01
+
+
 class CliError(RuntimeError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -576,8 +580,20 @@ def _control(args: argparse.Namespace, action: str) -> int:
     store = StateStore(args.state_dir)
     state = store.load()
     if state.status == "interrupted":
-        _emit({"work_unit_id": state.work_unit_id, "status": state.status, "control": action})
-        return 0
+        deadline = time.monotonic() + CONTROL_RESERVATION_WAIT_SECONDS
+        while active_lease_held(store.state_dir):
+            if time.monotonic() >= deadline:
+                raise CliError(
+                    "unsafe_process_identity",
+                    "active Runner did not publish its controller identity",
+                )
+            time.sleep(CONTROL_RESERVATION_POLL_SECONDS)
+            state = store.load()
+            if state.status != "interrupted":
+                break
+        else:
+            _emit({"work_unit_id": state.work_unit_id, "status": state.status, "control": action})
+            return 0
     active = state.runtime.get("active_run")
     if not isinstance(active, dict) or not active_lease_held(store.state_dir):
         def fail(current: WorkUnitState) -> None:

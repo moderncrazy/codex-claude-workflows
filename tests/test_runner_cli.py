@@ -923,6 +923,72 @@ class RunnerCliTests(unittest.TestCase):
                 self.assertEqual(preserved["segments"][0]["status"], "interrupted")
                 self.assertNotIn("backend_failure", preserved["runtime"])
 
+    @unittest.skipIf(os.name == "nt", "POSIX lease timing regression")
+    def test_interrupt_waits_for_resume_to_publish_its_controller_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            state_dir = self.init_work_unit(root, "1463a67b-f9cd-4386-a3f8-7908b582ca1f")
+            state_path = state_dir / "work-unit.json"
+            state = json.loads(state_path.read_text())
+            state["status"] = "interrupted"
+            state["segments"][0]["status"] = "interrupted"
+            state["segments"][0]["session_id"] = "49e35947-bddd-44b3-b4ca-86687008c6a9"
+            state["segments"][0]["attempt"] = 1
+            state["runtime"]["active_run"] = None
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            holder_script = """
+import fcntl
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from runner.contracts import WorkUnitStatus, utc_now
+from runner.state_store import StateStore
+from runner.supervisor import INTERRUPT_CONTROL_SIGNAL
+
+store = StateStore(Path(sys.argv[2]))
+descriptor = os.open(store.state_dir / "raw-events.jsonl", os.O_RDWR)
+fcntl.flock(descriptor, fcntl.LOCK_EX)
+signal.signal(INTERRUPT_CONTROL_SIGNAL, lambda _signal, _frame: sys.exit(0))
+print("LEASED", flush=True)
+time.sleep(0.1)
+
+def reserve(state):
+    state.transition_to(WorkUnitStatus.RUNNING)
+    state.segments[0]["status"] = "running"
+    state.runtime["active_run"] = {
+        "launch_token": "resuming",
+        "controller_pid": os.getpid(),
+        "identity": None,
+        "reserved_at": utc_now(),
+    }
+
+store.update(reserve)
+time.sleep(0.5)
+print("UNCONTROLLED", flush=True)
+sys.exit(7)
+"""
+            holder = subprocess.Popen(
+                [sys.executable, "-c", holder_script, str(RUNNER_ROOT), str(state_dir)],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.addCleanup(lambda: holder.poll() is None and holder.kill())
+            assert holder.stdout is not None
+            self.assertEqual(holder.stdout.readline().strip(), "LEASED")
+
+            control = self.run_cli("interrupt", "--state-dir", str(state_dir))
+            stdout, stderr = holder.communicate(timeout=2)
+
+            self.assertEqual(control["control"], "interrupt")
+            self.assertEqual(holder.returncode, 0, stderr + stdout)
+            self.assertNotIn("UNCONTROLLED", stdout)
+
     def test_finished_work_unit_rejects_reopen_and_repair(self) -> None:
         for mode in ("resume", "repair"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
