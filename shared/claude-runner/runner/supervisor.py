@@ -450,15 +450,16 @@ class Supervisor:
                     line, stdout_buffer = stdout_buffer.split(b"\n", 1)
                     line_with_newline = line + b"\n"
                     last_event = time.monotonic()
-                    try:
-                        for event in observation.observe_line(line_with_newline, last_event):
-                            self._emit(**event)
-                        if observation.permission_denial is not None and not permission_denial_handled:
-                            self._broker_stream_permission_denial(observation.permission_denial)
-                            permission_denial_handled = True
-                            self.interrupt()
-                    except StreamProtocolError as exc:
-                        protocol_error = str(exc)
+                    if protocol_error is None:
+                        try:
+                            for event in observation.observe_line(line_with_newline, last_event):
+                                self._emit(**event)
+                            if observation.permission_denial is not None and not permission_denial_handled:
+                                self._broker_stream_permission_denial(observation.permission_denial)
+                                permission_denial_handled = True
+                                self.interrupt()
+                        except StreamProtocolError as exc:
+                            protocol_error = str(exc)
                     if timeout_keys:
                         timeout_keys.clear()
                 self._update_last_raw_event()

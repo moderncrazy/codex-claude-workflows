@@ -117,6 +117,36 @@ def main() -> int:
             }
         )
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
+    elif scenario == "duplicate-tool-use-id-permission-denied":
+        for command in ("git add first.txt", "git add second.txt"):
+            emit(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_denied",
+                                "name": "Bash",
+                                "input": {"command": command},
+                            }
+                        ]
+                    },
+                    "session_id": session_id,
+                }
+            )
+        emit(
+            {
+                "type": "system",
+                "subtype": "permission_denied",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_denied",
+                "decision_reason_type": "other",
+                "decision_reason": "This command requires approval",
+                "message": "This command requires approval",
+                "session_id": session_id,
+            }
+        )
     elif scenario == "ignore-term":
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))

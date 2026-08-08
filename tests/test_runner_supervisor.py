@@ -299,6 +299,20 @@ class SupervisorTests(unittest.TestCase):
             self.assertNotIn("git add .permission-probe", json.dumps(events))
             self.assertTrue(any(event["kind"] == "permission_required" for event in events))
 
+    def test_duplicate_tool_use_id_permission_denial_is_backend_failure_without_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, supervisor, _ = self.make_supervisor(
+                Path(directory), "duplicate-tool-use-id-permission-denied"
+            )
+
+            self.assertNotEqual(supervisor.run(), 0)
+
+            state = store.load()
+            self.assertEqual(state.status, "backend_failure")
+            self.assertEqual(state.segments[0]["status"], "failed")
+            self.assertIsNone(state.permissions["pending"])
+            self.assertIn("duplicate tool_use_id", state.runtime["backend_failure"]["message"])
+
     def test_supervisor_refuses_dispatch_while_permission_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store, supervisor, _ = self.make_supervisor(Path(directory), "success")
