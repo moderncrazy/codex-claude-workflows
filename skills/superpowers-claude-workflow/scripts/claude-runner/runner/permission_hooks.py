@@ -69,6 +69,28 @@ def _fail_closed(sink: TextIO, reason: str) -> int:
     return 2
 
 
+def record_pending_permission(
+    state: Any,
+    request: dict[str, Any],
+    *,
+    tool_name: Any,
+    tool_input: Any,
+) -> None:
+    pending = state.permissions["pending"]
+    if pending is not None:
+        raise InvalidTransition("a permission request is already pending")
+    candidates = [segment for segment in state.segments if segment["status"] == "running"]
+    if len(candidates) != 1:
+        raise InvalidTransition("permission request does not identify one running Segment")
+    state.permissions["pending"] = {
+        "segment_id": candidates[0]["segment_id"],
+        "request": request,
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "received_at": utc_now(),
+    }
+
+
 def handle_permission_request(state_dir: Path, source: TextIO | None = None, sink: TextIO | None = None) -> int:
     input_stream = source or sys.stdin
     output_stream = sink or sys.stdout
@@ -79,19 +101,12 @@ def handle_permission_request(state_dir: Path, source: TextIO | None = None, sin
         store = StateStore(state_dir)
 
         def record(state: Any) -> None:
-            pending = state.permissions["pending"]
-            if pending is not None:
-                raise InvalidTransition("a permission request is already pending")
-            candidates = [segment for segment in state.segments if segment["status"] == "running"]
-            if len(candidates) != 1:
-                raise InvalidTransition("permission request does not identify one running Segment")
-            state.permissions["pending"] = {
-                "segment_id": candidates[0]["segment_id"],
-                "request": request,
-                "tool_name": request.get("tool_name"),
-                "tool_input": request.get("tool_input"),
-                "received_at": utc_now(),
-            }
+            record_pending_permission(
+                state,
+                request,
+                tool_name=request.get("tool_name"),
+                tool_input=request.get("tool_input"),
+            )
 
         store.update(record)
         _write(output_stream, PERMISSION_REQUEST_RESPONSE)
@@ -109,6 +124,12 @@ def handle_permission_denied(state_dir: Path, source: TextIO | None = None, sink
         store = StateStore(state_dir)
 
         def record(state: Any) -> None:
+            record_pending_permission(
+                state,
+                request,
+                tool_name=request.get("tool_name"),
+                tool_input=request.get("tool_input"),
+            )
             state.runtime["last_permission_denied"] = {"request": request, "received_at": utc_now()}
 
         store.update(record)
