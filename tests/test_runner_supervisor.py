@@ -301,17 +301,26 @@ class SupervisorTests(unittest.TestCase):
 
     def test_duplicate_tool_use_id_permission_denial_is_backend_failure_without_pending(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store, supervisor, _ = self.make_supervisor(
-                Path(directory), "duplicate-tool-use-id-permission-denied"
+            store, supervisor, events = self.make_supervisor(
+                Path(directory),
+                "duplicate-tool-use-id-permission-denied",
+                termination_grace_seconds=0.05,
             )
+            supervisor.environment["FAKE_CLAUDE_DELAY"] = "1"
 
+            started = time.monotonic()
             self.assertNotEqual(supervisor.run(), 0)
+            elapsed = time.monotonic() - started
 
             state = store.load()
+            self.assertLess(elapsed, 0.5)
             self.assertEqual(state.status, "backend_failure")
             self.assertEqual(state.segments[0]["status"], "failed")
             self.assertIsNone(state.permissions["pending"])
+            self.assertNotIn("control_requested", state.runtime)
             self.assertIn("duplicate tool_use_id", state.runtime["backend_failure"]["message"])
+            self.assertNotIn("git add first.txt", json.dumps(events))
+            self.assertNotIn("git add second.txt", json.dumps(events))
 
     def test_supervisor_refuses_dispatch_while_permission_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

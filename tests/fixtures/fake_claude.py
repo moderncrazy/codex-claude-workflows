@@ -28,7 +28,11 @@ def main() -> int:
     scenario = os.environ.get("FAKE_CLAUDE_SCENARIO", "success")
     if scenario == "ignore-term":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    elif scenario in {"ignore-interrupt-and-term", "stream-permission-denied"}:
+    elif scenario in {
+        "duplicate-tool-use-id-permission-denied",
+        "ignore-interrupt-and-term",
+        "stream-permission-denied",
+    }:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     session_id = option("--session-id") or option("--resume") or "missing"
@@ -147,6 +151,7 @@ def main() -> int:
                 "session_id": session_id,
             }
         )
+        time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))
     elif scenario == "ignore-term":
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_term_ready", "name": "Bash", "input": {}}]}})
         time.sleep(float(os.environ.get("FAKE_CLAUDE_DELAY", "5")))

@@ -460,6 +460,7 @@ class Supervisor:
                                 self.interrupt()
                         except StreamProtocolError as exc:
                             protocol_error = str(exc)
+                            self.interrupt()
                     if timeout_keys:
                         timeout_keys.clear()
                 self._update_last_raw_event()
@@ -472,15 +473,19 @@ class Supervisor:
         if stdout_buffer and protocol_error is None:
             protocol_error = "unterminated stream-json output"
         state = self.store.load()
+        if protocol_error is not None:
+            self._backend_failure(
+                protocol_error,
+                clear_pending_permission=True,
+                clear_control_request=True,
+            )
+            return return_code or 1
         if state.permissions["pending"] is not None:
             self._permission_required(return_code)
             return 3
         if state.runtime.get("control_requested") is not None:
             self._interrupted(return_code)
             return return_code or 130
-        if protocol_error is not None:
-            self._backend_failure(protocol_error)
-            return return_code or 1
         if observation.session_ids != {self.invocation.session_id}:
             self._backend_failure("Claude Session ID did not match the invocation")
             return return_code or 1
@@ -611,9 +616,19 @@ class Supervisor:
         self.store.update(mutate)
         self._emit("interrupted", exit_code=return_code)
 
-    def _backend_failure(self, message: str) -> None:
+    def _backend_failure(
+        self,
+        message: str,
+        *,
+        clear_pending_permission: bool = False,
+        clear_control_request: bool = False,
+    ) -> None:
         def mutate(state: object) -> None:
             state.transition_to(WorkUnitStatus.BACKEND_FAILURE)
+            if clear_pending_permission:
+                state.permissions["pending"] = None
+            if clear_control_request:
+                state.runtime.pop("control_requested", None)
             state.runtime["backend_failure"] = {"message": message, "recorded_at": utc_now()}
             self._finish_invocation_state(state, "failed", require_session_match=False)
 
